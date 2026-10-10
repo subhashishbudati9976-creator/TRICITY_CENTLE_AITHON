@@ -12,10 +12,27 @@ import mediapipe as mp
 import pyautogui
 from PIL import Image, ImageTk
 
+from core.command_router import CommandRouter
+from ui.dashboard import SectionHeader, TelemetryLog, ValueSlider
+from ui.theme import (
+    COLOR_CHARCOAL,
+    COLOR_INDIGO,
+    COLOR_IVORY,
+    COLOR_PANEL_BORDER,
+    COLOR_PANEL_DARK,
+    COLOR_PANEL_SURFACE,
+    COLOR_SAGE,
+    COLOR_STONE,
+    COLOR_VERMILION,
+    COLOR_VERMILION_HOVER,
+    FONT_MONO,
+    FONT_SANS,
+    FONT_SERIF,
+)
+from vision.gesture_processor import GestureProcessor
 from voice.voice_controller import VoiceController
 
 ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
 
 # Keep PyAutoGUI's emergency corner fail-safe enabled.
 pyautogui.FAILSAFE = True
@@ -28,13 +45,16 @@ class AirControlApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("AirControl | Gesture + Voice Assistant")
-        self.geometry("1100x720")
-        self.minsize(900, 600)
+        self.title("AirControl — Precision Desktop Control System")
+        self.geometry("1260x820")
+        self.minsize(1050, 680)
+        self.configure(fg_color=COLOR_CHARCOAL)
 
         # Shared state and queues MUST exist before any worker starts.
         self.running = True
         self.paused = True
+        self.gesture_processor = GestureProcessor(screen_w=SCREEN_W, screen_h=SCREEN_H)
+        self.command_router = CommandRouter(app_context=self)
         self.frame_queue = queue.Queue(maxsize=1)
         self.control_queue = queue.Queue(maxsize=1)
         self.status_queue = queue.Queue()
@@ -63,47 +83,377 @@ class AirControlApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        header = ctk.CTkFrame(self, corner_radius=12)
-        header.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="ew")
-        ctk.CTkLabel(header, text="AIRCONTROL", font=ctk.CTkFont(size=28, weight="bold")).pack(side="left", padx=20, pady=16)
-        self.pause_button = ctk.CTkButton(header, text="Enable Mouse Control", command=self._toggle_pause)
-        self.pause_button.pack(side="right", padx=16, pady=16)
-
-        content = ctk.CTkFrame(self, corner_radius=12)
-        content.grid(row=1, column=0, padx=16, pady=8, sticky="nsew")
-        content.grid_columnconfigure(0, weight=3)
-        content.grid_columnconfigure(1, weight=1)
-        content.grid_rowconfigure(0, weight=1)
-
-        self.video_label = ctk.CTkLabel(content, text="Waiting for webcam...")
-        self.video_label.grid(row=0, column=0, padx=12, pady=12, sticky="nsew")
-
-        panel = ctk.CTkFrame(content)
-        panel.grid(row=0, column=1, padx=(0, 12), pady=12, sticky="nsew")
-        ctk.CTkLabel(panel, text="SYSTEM STATUS", font=ctk.CTkFont(size=18, weight="bold")).pack(padx=12, pady=(18, 12))
-
-        for variable in (self.status_var, self.hand_var, self.control_var, self.last_action_var):
-            ctk.CTkLabel(panel, textvariable=variable, wraplength=210).pack(padx=12, pady=7)
-
-        ctk.CTkLabel(
-            panel,
-            text="Move index finger to move cursor.\n\nPinch thumb + index finger to click.\n\nClick Enable before testing.",
-            justify="left", wraplength=210,
-        ).pack(padx=12, pady=18)
-
-        ctk.CTkLabel(
+        # -------------------------------------------------------------
+        # TOP HEADER: Japanese Minimal Precision Instrument Header
+        # -------------------------------------------------------------
+        header = ctk.CTkFrame(
             self,
-            text="Safety: press Pause to disable control. Move mouse to the top-left corner for PyAutoGUI's emergency fail-safe.",
-            wraplength=900,
-        ).grid(row=2, column=0, padx=16, pady=(4, 12))
+            fg_color=COLOR_PANEL_DARK,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        header.grid(row=0, column=0, padx=16, pady=(14, 8), sticky="ew")
+        header.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(panel, text="VOICE CONTROL", font=ctk.CTkFont(size=16, weight="bold")).pack(padx=12, pady=(20, 8))
-        self.voice_mode_button = ctk.CTkSegmentedButton(panel, values=["Online", "Offline"], command=self._set_voice_mode)
+        # Brand mark & technical descriptor
+        brand_frame = ctk.CTkFrame(header, fg_color="transparent")
+        brand_frame.grid(row=0, column=0, padx=16, pady=10, sticky="w")
+
+        title_lbl = ctk.CTkLabel(
+            brand_frame,
+            text="AIRCONTROL",
+            font=ctk.CTkFont(family=FONT_SERIF, size=24, weight="bold"),
+            text_color=COLOR_IVORY,
+        )
+        title_lbl.pack(anchor="w")
+
+        sub_lbl = ctk.CTkLabel(
+            brand_frame,
+            text="TOUCH-FREE DESKTOP INTERACTION SYSTEM  |  PRECISION INSTRUMENT",
+            font=ctk.CTkFont(family=FONT_MONO, size=9),
+            text_color=COLOR_STONE,
+        )
+        sub_lbl.pack(anchor="w")
+
+        # Center Status Badges
+        center_status = ctk.CTkFrame(header, fg_color="transparent")
+        center_status.grid(row=0, column=1, padx=12, pady=10)
+
+        self.engine_badge = ctk.CTkLabel(
+            center_status,
+            text="● ENGINE STANDBY",
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            text_color=COLOR_STONE,
+        )
+        self.engine_badge.pack(side="left", padx=12)
+
+        self.cam_badge = ctk.CTkLabel(
+            center_status,
+            text="● SENSOR INIT",
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            text_color=COLOR_STONE,
+        )
+        self.cam_badge.pack(side="left", padx=12)
+
+        # Right control button
+        self.pause_button = ctk.CTkButton(
+            header,
+            text="Enable Mouse Control",
+            command=self._toggle_pause,
+            fg_color=COLOR_VERMILION,
+            hover_color=COLOR_VERMILION_HOVER,
+            text_color=COLOR_IVORY,
+            font=ctk.CTkFont(family=FONT_SANS, size=12, weight="bold"),
+            corner_radius=4,
+            height=34,
+            width=160,
+        )
+        self.pause_button.grid(row=0, column=2, padx=16, pady=10, sticky="e")
+
+        # -------------------------------------------------------------
+        # MAIN ASYMMETRIC WORKSPACE
+        # -------------------------------------------------------------
+        workspace = ctk.CTkFrame(self, fg_color="transparent")
+        workspace.grid(row=1, column=0, padx=16, pady=4, sticky="nsew")
+        workspace.grid_columnconfigure(0, weight=5)
+        workspace.grid_columnconfigure(1, weight=4)
+        workspace.grid_rowconfigure(0, weight=1)
+
+        # =============================================================
+        # COLUMN 0: OPTICAL SENSOR & GESTURE MATRIX
+        # =============================================================
+        left_panel = ctk.CTkFrame(
+            workspace,
+            fg_color=COLOR_PANEL_SURFACE,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        left_panel.grid(row=0, column=0, padx=(0, 8), pady=0, sticky="nsew")
+        left_panel.grid_columnconfigure(0, weight=1)
+        left_panel.grid_rowconfigure(1, weight=1)
+
+        sec1 = SectionHeader(left_panel, "01", "Optical Sensor & Landmark Matrix", "640x480 @ 30FPS")
+        sec1.grid(row=0, column=0, padx=14, pady=(12, 6), sticky="ew")
+
+        # Video frame viewport with thin crisp border
+        video_container = ctk.CTkFrame(
+            left_panel,
+            fg_color=COLOR_PANEL_DARK,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        video_container.grid(row=1, column=0, padx=14, pady=6, sticky="nsew")
+        video_container.grid_columnconfigure(0, weight=1)
+        video_container.grid_rowconfigure(0, weight=1)
+
+        self.video_label = ctk.CTkLabel(
+            video_container,
+            text="ACQUIRING OPTICAL SENSOR FEED...\n\nPLACE HAND IN VIEW TO ENGAGE MATRIX",
+            font=ctk.CTkFont(family=FONT_MONO, size=12),
+            text_color=COLOR_STONE,
+        )
+        self.video_label.grid(row=0, column=0, padx=8, pady=8, sticky="nsew")
+
+        # Telemetry bar under video
+        telemetry_bar = ctk.CTkFrame(
+            left_panel,
+            fg_color=COLOR_PANEL_DARK,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        telemetry_bar.grid(row=2, column=0, padx=14, pady=(6, 8), sticky="ew")
+        telemetry_bar.grid_columnconfigure(1, weight=1)
+
+        self.hands_badge = ctk.CTkLabel(
+            telemetry_bar,
+            textvariable=self.hand_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=11),
+            text_color=COLOR_IVORY,
+        )
+        self.hands_badge.grid(row=0, column=0, padx=12, pady=6, sticky="w")
+
+        self.state_badge = ctk.CTkLabel(
+            telemetry_bar,
+            textvariable=self.control_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            text_color=COLOR_STONE,
+        )
+        self.state_badge.grid(row=0, column=1, padx=12, pady=6)
+
+        self.failsafe_badge = ctk.CTkLabel(
+            telemetry_bar,
+            text="FAILSAFE: CORNER ARMED",
+            font=ctk.CTkFont(family=FONT_MONO, size=10),
+            text_color=COLOR_SAGE,
+        )
+        self.failsafe_badge.grid(row=0, column=2, padx=12, pady=6, sticky="e")
+
+        # Quick reference protocol matrix
+        ref_card = ctk.CTkFrame(
+            left_panel,
+            fg_color=COLOR_PANEL_DARK,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        ref_card.grid(row=3, column=0, padx=14, pady=(0, 10), sticky="ew")
+        ref_card.grid_columnconfigure(0, weight=1)
+        ref_card.grid_columnconfigure(1, weight=1)
+
+        # Left sub-column: Gestures
+        g_box = ctk.CTkFrame(ref_card, fg_color="transparent")
+        g_box.grid(row=0, column=0, padx=10, pady=6, sticky="nsew")
+
+        ctk.CTkLabel(
+            g_box,
+            text="[ GESTURE PROTOCOL ]",
+            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+            text_color=COLOR_VERMILION,
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            g_box,
+            text="• POSITION: 1.5–3 ft from lens\n• MOVE: Index finger tip (1€ Filter)\n• CLICK: Pinch thumb + index\n• FAIL-SAFE: Throw mouse to top-left",
+            font=ctk.CTkFont(family=FONT_MONO, size=9),
+            text_color=COLOR_STONE,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        # Right sub-column: Voice
+        v_box = ctk.CTkFrame(ref_card, fg_color="transparent")
+        v_box.grid(row=0, column=1, padx=10, pady=6, sticky="nsew")
+
+        ctk.CTkLabel(
+            v_box,
+            text="[ VOICE PROTOCOL ]",
+            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+            text_color=COLOR_INDIGO,
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            v_box,
+            text="• APPS: 'Open Chrome' | 'Launch Notepad'\n• WEB: 'Open LinkedIn / GitHub / YouTube in Chrome'\n• ACTIONS: 'Click' | 'Scroll Up/Down' | 'Zoom In/Out'\n• AUDIO: 'Volume Up/Down' | 'Mute'",
+            font=ctk.CTkFont(family=FONT_MONO, size=9),
+            text_color=COLOR_STONE,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        # =============================================================
+        # COLUMN 1: VOICE COMMAND CENTER & INSTRUMENT AUDIT LEDGER
+        # =============================================================
+        right_panel = ctk.CTkFrame(workspace, fg_color="transparent")
+        right_panel.grid(row=0, column=1, padx=(8, 0), pady=0, sticky="nsew")
+        right_panel.grid_columnconfigure(0, weight=1)
+        right_panel.grid_rowconfigure(2, weight=1)  # Audit log expands
+
+        # --- Section [ 02 ] Voice Interface ---
+        voice_card = ctk.CTkFrame(
+            right_panel,
+            fg_color=COLOR_PANEL_SURFACE,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        voice_card.grid(row=0, column=0, pady=(0, 8), sticky="ew")
+        voice_card.grid_columnconfigure(0, weight=1)
+
+        sec2 = SectionHeader(voice_card, "02", "Acoustic Command Translator")
+        sec2.grid(row=0, column=0, padx=12, pady=(10, 6), sticky="ew")
+
+        # Control Row inside voice card: Mode + Recording Stamp
+        voice_ctrl_row = ctk.CTkFrame(voice_card, fg_color="transparent")
+        voice_ctrl_row.grid(row=1, column=0, padx=12, pady=4, sticky="ew")
+
+        self.rec_badge = ctk.CTkLabel(
+            voice_ctrl_row,
+            text="● MIC STANDBY",
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            text_color=COLOR_STONE,
+        )
+        self.rec_badge.pack(side="left")
+
+        self.voice_mode_button = ctk.CTkSegmentedButton(
+            voice_ctrl_row,
+            values=["Online", "Offline"],
+            command=self._set_voice_mode,
+            selected_color=COLOR_INDIGO,
+            selected_hover_color="#364761",
+            unselected_color=COLOR_PANEL_DARK,
+            text_color=COLOR_IVORY,
+            font=ctk.CTkFont(family=FONT_SANS, size=11),
+            height=26,
+            corner_radius=4,
+        )
         self.voice_mode_button.set("Online")
-        self.voice_mode_button.pack(padx=12, pady=8)
-        ctk.CTkLabel(panel, textvariable=self.voice_status_var, wraplength=210).pack(padx=12, pady=8)
-        self.listen_button = ctk.CTkButton(panel, text="Listen for Command", command=self._start_voice)
-        self.listen_button.pack(padx=12, pady=8)
+        self.voice_mode_button.pack(side="right")
+
+        # Voice status display
+        v_disp = ctk.CTkFrame(
+            voice_card,
+            fg_color=COLOR_PANEL_DARK,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        v_disp.grid(row=2, column=0, padx=12, pady=6, sticky="ew")
+        v_disp.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            v_disp,
+            text="READOUT:",
+            font=ctk.CTkFont(family=FONT_MONO, size=10),
+            text_color=COLOR_STONE,
+        ).grid(row=0, column=0, padx=(8, 4), pady=6, sticky="w")
+
+        ctk.CTkLabel(
+            v_disp,
+            textvariable=self.voice_status_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            text_color=COLOR_IVORY,
+            wraplength=380,
+            justify="left",
+        ).grid(row=0, column=1, padx=4, pady=6, sticky="w")
+
+        # Listen Action Button
+        self.listen_button = ctk.CTkButton(
+            voice_card,
+            text="Listen for Command",
+            command=self._start_voice,
+            fg_color=COLOR_INDIGO,
+            hover_color="#364761",
+            text_color=COLOR_IVORY,
+            font=ctk.CTkFont(family=FONT_SANS, size=12, weight="bold"),
+            corner_radius=4,
+            height=32,
+        )
+        self.listen_button.grid(row=3, column=0, padx=12, pady=(4, 10), sticky="ew")
+
+        # --- Section [ 03 ] Audit Log ---
+        sec3 = SectionHeader(right_panel, "03", "Chronological Instrument Audit Log")
+        sec3.grid(row=1, column=0, pady=(4, 4), sticky="ew")
+
+        self.telemetry_log = TelemetryLog(right_panel)
+        self.telemetry_log.grid(row=2, column=0, pady=0, sticky="nsew")
+
+        # --- Section [ 04 ] Calibration Desk ---
+        calib_card = ctk.CTkFrame(
+            right_panel,
+            fg_color=COLOR_PANEL_SURFACE,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        calib_card.grid(row=3, column=0, pady=(8, 0), sticky="ew")
+        calib_card.grid_columnconfigure(0, weight=1)
+
+        sec4 = SectionHeader(calib_card, "04", "Calibration & Filter Parameters")
+        sec4.grid(row=0, column=0, padx=12, pady=(8, 4), sticky="ew")
+
+        self.slider_sens = ValueSlider(
+            calib_card,
+            label="Sensitivity Scale",
+            from_=0.4,
+            to=2.5,
+            default=1.0,
+            unit="x",
+            on_change=lambda val: self.gesture_processor.update_settings(sensitivity=val),
+        )
+        self.slider_sens.grid(row=1, column=0, padx=12, pady=3, sticky="ew")
+
+        self.slider_filter = ValueSlider(
+            calib_card,
+            label="1€ Filter Cutoff",
+            from_=0.2,
+            to=2.5,
+            default=0.8,
+            unit="Hz",
+            on_change=lambda val: self.gesture_processor.update_settings(min_cutoff=val),
+        )
+        self.slider_filter.grid(row=2, column=0, padx=12, pady=3, sticky="ew")
+
+        self.slider_cooldown = ValueSlider(
+            calib_card,
+            label="Click Debounce",
+            from_=0.15,
+            to=0.80,
+            default=0.40,
+            unit="s",
+            on_change=lambda val: self.gesture_processor.update_settings(click_cooldown=val),
+        )
+        self.slider_cooldown.grid(row=3, column=0, padx=12, pady=(3, 8), sticky="ew")
+
+        # -------------------------------------------------------------
+        # BOTTOM STATUS STRIP
+        # -------------------------------------------------------------
+        footer = ctk.CTkFrame(
+            self,
+            fg_color=COLOR_PANEL_DARK,
+            border_color=COLOR_PANEL_BORDER,
+            border_width=1,
+            corner_radius=4,
+        )
+        footer.grid(row=2, column=0, padx=16, pady=(6, 12), sticky="ew")
+        footer.grid_columnconfigure(1, weight=1)
+
+        self.system_status_label = ctk.CTkLabel(
+            footer,
+            textvariable=self.status_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=10),
+            text_color=COLOR_IVORY,
+        )
+        self.system_status_label.grid(row=0, column=0, padx=14, pady=6, sticky="w")
+
+        self.action_display_label = ctk.CTkLabel(
+            footer,
+            textvariable=self.last_action_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+            text_color=COLOR_SAGE,
+        )
+        self.action_display_label.grid(row=0, column=1, padx=14, pady=6, sticky="e")
 
     def _publish_control(self, command):
         """Keep only the newest gesture sample."""
@@ -179,10 +529,19 @@ class AirControlApp(ctk.CTk):
                         wrist = landmarks.landmark[0]
                         middle_mcp = landmarks.landmark[9]
 
-                        pinch_distance = math.hypot(index_tip.x - thumb_tip.x, index_tip.y - thumb_tip.y)
-                        palm_size = math.hypot(middle_mcp.x - wrist.x, middle_mcp.y - wrist.y)
-                        pinch_ratio = pinch_distance / palm_size if palm_size > 0.001 else 1.0
-                        pinching = pinch_ratio < 0.32
+                        processor = self.__dict__.get("gesture_processor")
+                        if processor is not None:
+                            pinching, pinch_ratio = processor.calculate_pinch(
+                                index_tip.x, index_tip.y,
+                                thumb_tip.x, thumb_tip.y,
+                                wrist.x, wrist.y,
+                                middle_mcp.x, middle_mcp.y,
+                            )
+                        else:
+                            pinch_distance = math.hypot(index_tip.x - thumb_tip.x, index_tip.y - thumb_tip.y)
+                            palm_size = math.hypot(middle_mcp.x - wrist.x, middle_mcp.y - wrist.y)
+                            pinch_ratio = pinch_distance / palm_size if palm_size > 0.001 else 1.0
+                            pinching = pinch_ratio < 0.32
 
                         cv2.putText(
                             frame, "PINCH" if pinching else "OPEN", (20, 40),
@@ -213,11 +572,9 @@ class AirControlApp(ctk.CTk):
             cap.release()
 
     def _mouse_worker(self):
-        smooth_x = smooth_y = None
-        previous_pinch = False
-        last_click_time = 0.0
-        smoothing = 0.30
-        click_cooldown = 0.45
+        processor = self.__dict__.get("gesture_processor")
+        if processor is None:
+            processor = self.gesture_processor = GestureProcessor(SCREEN_W, SCREEN_H)
 
         while self.running:
             try:
@@ -234,6 +591,7 @@ class AirControlApp(ctk.CTk):
                             self._execute_voice_command(command)
                         except pyautogui.FailSafeException:
                             self.paused = True
+                            processor.reset()
                             self.status_queue.put("CONTROL:PAUSED")
                             self.status_queue.put("Safety stop: mouse control disabled")
                         except Exception as exc:
@@ -246,37 +604,26 @@ class AirControlApp(ctk.CTk):
                 except queue.Empty:
                     continue
 
-                if self.paused or x is None or y is None:
-                    previous_pinch = False
-                    smooth_x = smooth_y = None
+                if self.paused:
+                    processor.reset()
                     continue
 
-                x = max(0.08, min(0.92, x))
-                y = max(0.08, min(0.92, y))
-                margin = 20
-                target_x = margin + ((x - 0.08) / 0.84) * (SCREEN_W - 2 * margin)
-                target_y = margin + ((y - 0.08) / 0.84) * (SCREEN_H - 2 * margin)
+                screen_x, screen_y, trigger_click = processor.process_frame(x, y, pinching)
 
-                if smooth_x is None:
-                    smooth_x, smooth_y = target_x, target_y
-                else:
-                    smooth_x += smoothing * (target_x - smooth_x)
-                    smooth_y += smoothing * (target_y - smooth_y)
-
-                try:
-                    pyautogui.moveTo(int(smooth_x), int(smooth_y), duration=0)
-                    now = time.monotonic()
-                    if pinching and not previous_pinch and now - last_click_time >= click_cooldown:
-                        pyautogui.click()
-                        last_click_time = now
-                except pyautogui.FailSafeException:
-                    self.paused = True
-                    self.status_queue.put("CONTROL:PAUSED")
-                    self.status_queue.put("Safety stop: mouse control disabled")
-                except Exception as exc:
-                    self.status_queue.put(f"Mouse control error: {exc}")
-                    traceback.print_exc()
-                previous_pinch = pinching
+                if screen_x is not None and screen_y is not None:
+                    try:
+                        pyautogui.moveTo(screen_x, screen_y, duration=0)
+                        if trigger_click:
+                            pyautogui.click()
+                            self.status_queue.put("Action: Gesture Click")
+                    except pyautogui.FailSafeException:
+                        self.paused = True
+                        processor.reset()
+                        self.status_queue.put("CONTROL:PAUSED")
+                        self.status_queue.put("Safety stop: mouse control disabled")
+                    except Exception as exc:
+                        self.status_queue.put(f"Mouse control error: {exc}")
+                        traceback.print_exc()
 
             except Exception as loop_exc:
                 traceback.print_exc()
@@ -321,71 +668,16 @@ class AirControlApp(ctk.CTk):
         """Execute only allowlisted desktop commands; this runs on the action worker."""
         if not text:
             return
-
-        # Normalize: strip punctuation, replace hyphens with space, collapse whitespace
-        cleaned = text.lower().replace("-", " ").translate(str.maketrans("", "", string.punctuation))
-        command = " ".join(cleaned.split())
-
-        # Voice commands are independent of gesture cursor tracking.
-        # `self.paused` disables only hand-driven cursor movement/clicking;
-        # it must not block voice-driven clicks, scrolling, zoom, or system controls.
-
-        if command in ("left click", "click"):
-            pyautogui.click()
-            self.status_queue.put("Action: Click")
-        elif command == "double click":
-            pyautogui.doubleClick()
-            self.status_queue.put("Action: Double Click")
-        elif command == "right click":
-            pyautogui.rightClick()
-            self.status_queue.put("Action: Right Click")
-        elif command == "scroll up":
-            pyautogui.scroll(200)
-            self.status_queue.put("Action: Scroll Up")
-        elif command == "scroll down":
-            pyautogui.scroll(-200)
-            self.status_queue.put("Action: Scroll Down")
-        elif command == "zoom in":
-            pyautogui.hotkey("ctrl", "+", interval=0.05)
-            self.status_queue.put("Action: Zoom In")
-        elif command == "zoom out":
-            pyautogui.hotkey("ctrl", "-", interval=0.05)
-            self.status_queue.put("Action: Zoom Out")
-        elif command in ("mute", "unmute"):
-            pyautogui.press("volumemute")
-            self.status_queue.put("Action: Mute")
-        elif command == "volume up":
-            pyautogui.press("volumeup")
-            self.status_queue.put("Action: Volume Up")
-        elif command == "volume down":
-            pyautogui.press("volumedown")
-            self.status_queue.put("Action: Volume Down")
-        elif command in ("move cursor left", "move left", "mouse left"):
-            pyautogui.move(-100, 0)
-            self.status_queue.put("Action: Move Left")
-        elif command in ("move cursor right", "move right", "mouse right"):
-            pyautogui.move(100, 0)
-            self.status_queue.put("Action: Move Right")
-        elif command in ("move cursor up", "move up", "mouse up"):
-            pyautogui.move(0, -100)
-            self.status_queue.put("Action: Move Up")
-        elif command in ("move cursor down", "move down", "mouse down"):
-            pyautogui.move(0, 100)
-            self.status_queue.put("Action: Move Down")
-        elif command in ("pause control", "pause", "pause mouse", "pause tracking"):
-            self.paused = True
-            self.status_queue.put("CONTROL:PAUSED")
-            self.status_queue.put("Mouse control paused")
-            self._publish_control((None, None, False))
-        elif command in ("resume control", "resume", "resume mouse", "resume tracking"):
-            self.paused = False
-            self.status_queue.put("CONTROL:RESUMED")
-            self.status_queue.put("Mouse control active")
-        else:
-            self.status_queue.put(f"Unknown command: {command}")
+        router = self.__dict__.get("command_router")
+        if router is None:
+            router = self.command_router = CommandRouter(app_context=self)
+        router.execute(text, app=self)
 
     def _toggle_pause(self):
         self.paused = not self.paused
+        processor = self.__dict__.get("gesture_processor")
+        if processor:
+            processor.reset()
         self.pause_button.configure(text="Enable Mouse Control" if self.paused else "Pause Mouse Control")
         self.control_var.set("Mouse control: DISABLED" if self.paused else "Mouse control: ENABLED")
         self.status_var.set("Mouse control paused" if self.paused else "Mouse control active")
@@ -396,6 +688,11 @@ class AirControlApp(ctk.CTk):
         if not self.running:
             return
 
+        t_log = self.__dict__.get("telemetry_log")
+        e_badge = self.__dict__.get("engine_badge")
+        c_badge = self.__dict__.get("cam_badge")
+        r_badge = self.__dict__.get("rec_badge")
+
         while True:
             try:
                 status = self.status_queue.get_nowait()
@@ -403,32 +700,69 @@ class AirControlApp(ctk.CTk):
                 break
 
             if status.startswith("HANDS:"):
-                self.hand_var.set("Hands detected: " + status.split(":", 1)[1])
+                cnt = status.split(":", 1)[1]
+                self.hand_var.set("Hands detected: " + cnt)
             elif status == "CONTROL:PAUSED":
                 self.control_var.set("Mouse control: DISABLED")
                 self.pause_button.configure(text="Enable Mouse Control")
+                if e_badge:
+                    e_badge.configure(text="● ENGINE PAUSED", text_color=COLOR_STONE)
+                if t_log:
+                    t_log.append_entry("SAFETY", "Mouse control paused", "HOLD")
             elif status == "CONTROL:RESUMED":
                 self.control_var.set("Mouse control: ENABLED")
                 self.pause_button.configure(text="Pause Mouse Control")
+                if e_badge:
+                    e_badge.configure(text="● ENGINE ACTIVE", text_color=COLOR_SAGE)
+                if t_log:
+                    t_log.append_entry("ENGINE", "Mouse control active", "ONLINE")
             elif status == "VOICE_READY":
                 self.listen_button.configure(state="normal")
+                if r_badge:
+                    r_badge.configure(text="● MIC STANDBY", text_color=COLOR_STONE)
             elif status.startswith("VOICE_STATUS:"):
-                self.voice_status_var.set(status.split(":", 1)[1])
+                msg = status.split(":", 1)[1]
+                self.voice_status_var.set(msg)
+                if "Listening" in msg and r_badge:
+                    r_badge.configure(text="● RECORDING...", text_color=COLOR_VERMILION)
+                if t_log:
+                    t_log.append_entry("VOICE", msg[:36], "INFO")
             elif status.startswith("VOICE_ERROR:"):
-                self.voice_status_var.set(status.split(":", 1)[1])
+                err = status.split(":", 1)[1]
+                self.voice_status_var.set(err)
+                if r_badge:
+                    r_badge.configure(text="● MIC ERROR", text_color=COLOR_VERMILION)
+                if t_log:
+                    t_log.append_entry("VOICE", err[:36], "ERROR")
             elif status.startswith("Heard:"):
                 self.voice_status_var.set(status)
+                if t_log:
+                    t_log.append_entry("VOICE", status[:36], "RECOG")
             elif status.startswith("CAMERA_ERROR:"):
                 msg = status.split(":", 1)[1]
                 self.status_var.set(f"Camera: {msg}")
                 self.video_label.configure(image="", text=f"Camera Unavailable\n\n{msg}")
+                if c_badge:
+                    c_badge.configure(text="● CAM ERROR", text_color=COLOR_VERMILION)
+                if t_log:
+                    t_log.append_entry("CAMERA", msg[:36], "ERROR")
             elif status == "Camera connected":
                 self.status_var.set("Camera: Connected")
+                if c_badge:
+                    c_badge.configure(text="● CAM ONLINE", text_color=COLOR_SAGE)
+                if t_log:
+                    t_log.append_entry("CAMERA", "Optical sensor connected", "ONLINE")
             elif status.startswith("Action:"):
-                self.last_action_var.set(f"Last action: {status.split(':', 1)[1].strip()}")
+                act = status.split(":", 1)[1].strip()
+                self.last_action_var.set(f"Last action: {act}")
                 self.status_var.set(status)
+                src = "GESTURE" if "Gesture" in act else "VOICE"
+                if t_log:
+                    t_log.append_entry(src, act[:36], "SUCCESS")
             else:
                 self.status_var.set(status)
+                if t_log:
+                    t_log.append_entry("SYSTEM", status[:36], "EVENT")
 
         try:
             frame = self.frame_queue.get_nowait()

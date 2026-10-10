@@ -14,3 +14,4 @@ __pycache__/
 .env
 models/
 "@ | Out-File -Encoding utf8 .gitignore
+.venv312/

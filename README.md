@@ -5,9 +5,9 @@
 [![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands_21_Landmarks-007ACC?logo=google&logoColor=white)](https://mediapipe.dev/)
-[![CustomTkinter](https://img.shields.io/badge/GUI-CustomTkinter_Dark-1F6AA5)](https://github.com/TomSchimansky/CustomTkinter)
+[![Design](https://img.shields.io/badge/Aesthetic-Japanese_Minimal_%C3%97_Swiss_Engineering-20211F)](https://github.com/TomSchimansky/CustomTkinter)
 [![Vosk](https://img.shields.io/badge/Offline_STT-Vosk_Kaldi-orange)](https://alphacephei.com/vosk/)
-[![Pytest](https://img.shields.io/badge/Tests-27_Passed-brightgreen?logo=pytest&logoColor=white)](https://pytest.org/)
+[![Pytest](https://img.shields.io/badge/Tests-48_Passed-brightgreen?logo=pytest&logoColor=white)](https://pytest.org/)
 [![OS](https://img.shields.io/badge/Platform-Windows_10%20%2F%2011-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
 
 ---
@@ -16,6 +16,7 @@
 
 - **Project Name:** AirControl
 - **Tagline:** Touch-Free Multimodal Desktop Interaction via Real-Time Computer Vision and Decoupled Speech Control
+- **Visual Direction:** Japanese Minimal × Swiss Engineering (Warm Ivory, Charcoal Ink, Deep Indigo, Vermilion Red, Muted Stone, Soft Sage)
 - **Project Category:** Assistive Technology / Human-Computer Interaction (HCI) / Computer Vision
 - **Target Audience:** Users with motor or physical mobility limitations, professionals in sterile environments (medical, lab, culinary), presenters, and power users seeking touch-free computing.
 - **Primary Objective:** Provide a seamless, robust, and safe alternative to conventional mouse and keyboard peripherals by integrating continuous hand-gesture tracking with discrete, allowlisted voice commands into a single desktop application.
@@ -32,8 +33,8 @@ Conventional desktop computing is tethered to physical mice and keyboards. This 
 
 ### The Proposed Solution
 **AirControl** solves this through a unified, multimodal desktop application that combines:
-1. **Continuous Visual Input:** Live webcam stream analyzed by MediaPipe to detect 21 3D hand landmarks, mapping index fingertip movements to screen coordinates and scale-invariant finger pinches to mouse clicks.
-2. **Discrete Voice Control:** Multi-backend speech recognition (Google Cloud STT for online conversational accuracy; local Vosk Kaldi neural model for 100% offline privacy) to trigger high-utility desktop actions (`zoom in/out`, `scroll up/down`, `volume control`, `double click`).
+1. **Continuous Visual Input:** Live webcam stream analyzed by MediaPipe to detect 21 3D hand landmarks, smoothed with an adaptive **1€ Filter** (Casiez CHI 2012) and anchored with **Schmitt trigger pinch hysteresis**.
+2. **Discrete Voice Control:** Multi-backend speech recognition (Google Cloud STT for online conversational accuracy; local Vosk Kaldi neural model for 100% offline privacy) with a safe **Command Router** executing allowlisted desktop actions, application launches (*Chrome, Notepad, Calculator*), and tab navigations (*LinkedIn, GitHub, YouTube*).
 3. **Decoupled Architecture:** Unlike naive systems where voice recognition blocks the camera loop, AirControl's background worker threads and FIFO queues ensure voice commands execute immediately, even when mouse tracking is paused or the webcam is disconnected.
 
 ---
@@ -43,18 +44,20 @@ Conventional desktop computing is tethered to physical mice and keyboards. This 
 Every feature listed below is verified against the codebase and validated by automated tests:
 
 - [x] **Real-Time Hand Tracking:** 30 FPS landmark tracking using MediaPipe Hands (21 3D points per hand) with horizontal mirror flipping.
-- [x] **Scale-Invariant Pinch Detection:** Thumb-to-index Euclidean distance normalized against palm span (wrist to middle MCP), ensuring consistent click detection regardless of hand distance from the webcam.
-- [x] **Exponential Cursor Smoothing:** Low-pass filter (`30%` weight on new target coordinates) to eliminate physiological micro-tremors.
-- [x] **Boundary Clamping & Screen Mapping:** Active hand box clamped between 8% and 92% of the frame and mapped to full monitor resolution with a 20px edge margin.
-- [x] **Click Cooldown Protection:** 0.45-second state transition cooldown to prevent accidental rapid double-clicking during a pinch.
+- [x] **Adaptive 1€ Filter Smoothing:** Velocity-responsive filtering eliminating jitter when still and eliminating lag during rapid hand sweeps.
+- [x] **Schmitt Trigger Pinch Hysteresis:** Dual threshold (`down < 0.28`, `up > 0.35`) eliminating contact chatter and boundary flicker.
+- [x] **Click-Freeze Anchor:** 120ms position lock during pinch-down to prevent the physical act of squeezing fingers from shifting the cursor off target.
+- [x] **Tracking Loss Grace Hold:** Retains last filtered position across brief occlusions (~130ms) before smoothly clearing state.
+- [x] **Application Launching (Allowlist):** Safe voice execution launching Google Chrome, Notepad, and Calculator via argument lists without `shell=True`.
+- [x] **Website Tab Navigation:** Voice commands (`"Open LinkedIn in Chrome"`, `"Open GitHub in Chrome"`, `"Open YouTube in Chrome"`) launching or creating tabs in Chrome.
+- [x] **Command Deduplication:** 0.6-second debounce preventing accidental double-triggers.
+- [x] **Japanese Minimal × Swiss Engineering Interface:** Restrained palette, numbered section labels `[ 01 ]`, monospaced telemetry, and red recording indicator `● REC`.
+- [x] **Chronological Telemetry Audit Log:** Real-time instrument readout displaying timestamps, input sources, actions, and execution statuses.
+- [x] **Live Parameter Calibration:** Interactive sliders for sensitivity, 1€ filter cutoff, and click debounce.
 - [x] **Online Cloud Voice Control:** Google Speech Recognition with an automatic 1-retry mechanism for momentary unclear speech.
 - [x] **100% Offline Local Voice Control:** Embedded Vosk Kaldi engine (`vosk-model-en-us-0.22-lgraph`) operating on 16kHz raw PCM audio buffers with zero internet connectivity.
-- [x] **Acoustic Noise Management:** Single-shot ambient noise calibration on microphone initialization, clamped between 80 and 1000 to prevent microphone desensitization.
 - [x] **Subsystem Decoupling:** Voice control operates independently of camera state or mouse pause toggle.
-- [x] **Strict Security Allowlist:** Normalized voice commands matched against allowlisted actions; arbitrary or malicious phrases (e.g., *"delete all files"*) are safely rejected.
 - [x] **Hardware Pause & PyAutoGUI Fail-Safe:** Dedicated UI button, voice commands (`"pause control"`, `"resume control"`), and emergency corner slam (`(0, 0)`) intercept.
-- [x] **Resilient Camera Reconnection:** Windows DirectShow backend with automatic recovery after consecutive dropped frames.
-- [x] **Modern Dark Dashboard:** CustomTkinter interface with live mirrored video, status indicators, and real-time feedback.
 
 ---
 

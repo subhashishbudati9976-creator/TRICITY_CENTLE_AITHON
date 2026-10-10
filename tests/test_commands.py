@@ -138,6 +138,64 @@ class TestCommandExecution(unittest.TestCase):
         mock_hotkey.assert_not_called()
         mock_move.assert_not_called()
 
+    @patch("subprocess.Popen")
+    @patch("core.command_router.CommandRouter.find_executable")
+    def test_open_chrome_and_websites_in_chrome(self, mock_find_exe, mock_popen):
+        mock_find_exe.return_value = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+        # 1. Open Chrome
+        self.app._execute_voice_command("Open Chrome")
+        mock_popen.assert_called_with([r"C:\Program Files\Google\Chrome\Application\chrome.exe"], shell=False)
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Launch Google Chrome")
+
+        # 2. Open LinkedIn in Chrome
+        self.app.command_router.last_command_time = 0.0
+        self.app._execute_voice_command("Open LinkedIn in Chrome")
+        mock_popen.assert_called_with(
+            [r"C:\Program Files\Google\Chrome\Application\chrome.exe", "https://www.linkedin.com"],
+            shell=False,
+        )
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Open LinkedIn in Chrome")
+
+        # 3. Open GitHub in Chrome
+        self.app.command_router.last_command_time = 0.0
+        self.app._execute_voice_command("Open GitHub in Chrome")
+        mock_popen.assert_called_with(
+            [r"C:\Program Files\Google\Chrome\Application\chrome.exe", "https://www.github.com"],
+            shell=False,
+        )
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Open GitHub in Chrome")
+
+        # 4. Open YouTube in Chrome
+        self.app.command_router.last_command_time = 0.0
+        self.app._execute_voice_command("Open YouTube in Chrome")
+        mock_popen.assert_called_with(
+            [r"C:\Program Files\Google\Chrome\Application\chrome.exe", "https://www.youtube.com"],
+            shell=False,
+        )
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Open YouTube in Chrome")
+
+    @patch("subprocess.Popen")
+    @patch("core.command_router.CommandRouter.find_executable")
+    def test_open_notepad_and_calculator(self, mock_find_exe, mock_popen):
+        mock_find_exe.side_effect = [r"C:\Windows\System32\notepad.exe", r"C:\Windows\System32\calc.exe"]
+
+        self.app._execute_voice_command("Launch Notepad")
+        mock_popen.assert_called_with([r"C:\Windows\System32\notepad.exe"], shell=False)
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Launch Notepad")
+
+        self.app.command_router.last_command_time = 0.0
+        self.app._execute_voice_command("Launch Calculator")
+        mock_popen.assert_called_with([r"C:\Windows\System32\calc.exe"], shell=False)
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Launch Calculator")
+
 
 if __name__ == "__main__":
     unittest.main()
+
