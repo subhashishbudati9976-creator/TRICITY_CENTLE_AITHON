@@ -9,4 +9,8 @@ __pycache__/
 .pytest_cache/
 .idea/
 .vscode/
+.venv/
+__pycache__/
+.env
+models/
 "@ | Out-File -Encoding utf8 .gitignore
