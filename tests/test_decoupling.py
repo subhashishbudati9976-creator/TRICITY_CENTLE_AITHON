@@ -24,6 +24,7 @@ class TestDecouplingAndWorker(unittest.TestCase):
         self.app.listen_button = MagicMock()
         self.app.voice_status_var = MagicMock()
         self.app.status_var = MagicMock()
+        self.app.last_action_var = MagicMock()
         self.app.video_label = MagicMock()
         self.app.after = MagicMock()
 
@@ -119,6 +120,37 @@ class TestDecouplingAndWorker(unittest.TestCase):
 
         self.app.control_var.set.assert_called_with("Mouse control: ENABLED")
         self.app.pause_button.configure.assert_called_with(text="Pause Mouse Control")
+
+    def test_dashboard_handles_camera_error_and_reconnection(self):
+        self.app.status_queue.put("CAMERA_ERROR:Webcam unavailable. Check permissions.")
+        while True:
+            try:
+                status = self.app.status_queue.get_nowait()
+            except queue.Empty:
+                break
+            if status.startswith("CAMERA_ERROR:"):
+                msg = status.split(":", 1)[1]
+                self.app.status_var.set(f"Camera: {msg}")
+                self.app.video_label.configure(image="", text=f"Camera Unavailable\n\n{msg}")
+
+        self.app.status_var.set.assert_called_with("Camera: Webcam unavailable. Check permissions.")
+        self.app.video_label.configure.assert_called_with(
+            image="", text="Camera Unavailable\n\nWebcam unavailable. Check permissions."
+        )
+
+    def test_dashboard_updates_last_action_on_command(self):
+        self.app.status_queue.put("Action: Double Click")
+        while True:
+            try:
+                status = self.app.status_queue.get_nowait()
+            except queue.Empty:
+                break
+            if status.startswith("Action:"):
+                self.app.last_action_var.set(f"Last action: {status.split(':', 1)[1].strip()}")
+                self.app.status_var.set(status)
+
+        self.app.last_action_var.set.assert_called_with("Last action: Double Click")
+        self.app.status_var.set.assert_called_with("Action: Double Click")
 
 
 if __name__ == "__main__":

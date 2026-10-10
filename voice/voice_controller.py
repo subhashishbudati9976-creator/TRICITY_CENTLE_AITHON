@@ -44,8 +44,8 @@ class VoiceController:
             from vosk import Model
             if not self.model_path.exists():
                 raise FileNotFoundError(
-                    f"Vosk model not found: {self.model_path}. "
-                    "Place the extracted model folder inside the project's models folder."
+                    f"Vosk model not found at {self.model_path}. "
+                    "Switch to Online mode or verify models folder."
                 )
             self._vosk_model = Model(str(self.model_path))
             return self._vosk_model
@@ -106,24 +106,24 @@ class VoiceController:
                             if on_status:
                                 on_status("Speech unclear. Listening again...")
                             continue
-                        return "", "Speech was unclear. Please try again."
+                        return "", "Speech was unclear. Please speak clearly near the microphone."
                     except sr.RequestError as exc:
-                        return "", f"Online recognition unavailable: {exc}"
+                        return "", f"Online recognition unavailable: {exc}. Switch to Offline mode or check network."
 
             except sr.WaitTimeoutError:
-                return "", "No speech detected before timeout. Try again."
+                return "", "No speech detected before timeout. Click Listen and speak clearly."
             except sr.UnknownValueError:
                 if attempts <= max_retries:
                     if on_status:
                         on_status("Speech unclear. Listening again...")
                     continue
-                return "", "Speech was unclear. Please try again."
+                return "", "Speech was unclear. Please speak clearly near the microphone."
             except OSError as exc:
-                return "", f"Microphone error: {exc}"
+                return "", f"Microphone error: {exc}. Please check your audio input device and permissions."
             except Exception as exc:
                 return "", str(exc)
 
-        return "", "Speech was unclear. Please try again."
+        return "", "Speech was unclear. Please speak clearly near the microphone."
 
     def close(self):
         """Cleanly release cached model resources."""

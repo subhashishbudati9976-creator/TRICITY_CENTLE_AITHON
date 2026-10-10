@@ -46,6 +46,7 @@ class AirControlApp(ctk.CTk):
         self.status_var = tk.StringVar(master=self, value="Camera starting...")
         self.hand_var = tk.StringVar(master=self, value="Hands detected: 0")
         self.control_var = tk.StringVar(master=self, value="Mouse control: DISABLED")
+        self.last_action_var = tk.StringVar(master=self, value="Last action: None")
         self.voice_status_var = tk.StringVar(master=self, value="Voice: Ready")
 
         self._build_ui()
@@ -81,8 +82,8 @@ class AirControlApp(ctk.CTk):
         panel.grid(row=0, column=1, padx=(0, 12), pady=12, sticky="nsew")
         ctk.CTkLabel(panel, text="SYSTEM STATUS", font=ctk.CTkFont(size=18, weight="bold")).pack(padx=12, pady=(18, 12))
 
-        for variable in (self.status_var, self.hand_var, self.control_var):
-            ctk.CTkLabel(panel, textvariable=variable, wraplength=210).pack(padx=12, pady=10)
+        for variable in (self.status_var, self.hand_var, self.control_var, self.last_action_var):
+            ctk.CTkLabel(panel, textvariable=variable, wraplength=210).pack(padx=12, pady=7)
 
         ctk.CTkLabel(
             panel,
@@ -121,13 +122,20 @@ class AirControlApp(ctk.CTk):
     def _camera_worker(self):
         hands_module = mp.solutions.hands
         drawing = mp.solutions.drawing_utils
+
+        # Resilient camera opening: try DirectShow first on Windows, then standard index 0
         cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            self.status_queue.put("ERROR: Webcam unavailable")
+            cap = cv2.VideoCapture(0)
+
+        if not cap.isOpened():
+            self.status_queue.put("CAMERA_ERROR:Webcam unavailable. Check permissions or close other apps using camera.")
             return
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        consecutive_drops = 0
+
         try:
             with hands_module.Hands(
                 static_image_mode=False,
@@ -139,10 +147,22 @@ class AirControlApp(ctk.CTk):
                 while self.running:
                     ok, frame = cap.read()
                     if not ok:
-                        self.status_queue.put("Camera frame unavailable")
+                        consecutive_drops += 1
+                        if consecutive_drops == 10:
+                            self.status_queue.put("CAMERA_ERROR:Camera feed interrupted. Reconnecting...")
+                        if consecutive_drops > 25:
+                            cap.release()
+                            time.sleep(0.5)
+                            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+                            if not cap.isOpened():
+                                cap = cv2.VideoCapture(0)
+                            consecutive_drops = 0
+                            if cap.isOpened():
+                                self.status_queue.put("Camera connected")
                         time.sleep(0.05)
                         continue
 
+                    consecutive_drops = 0
                     frame = cv2.flip(frame, 1)
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     result = hands.process(rgb)
@@ -264,7 +284,10 @@ class AirControlApp(ctk.CTk):
 
     def _set_voice_mode(self, value):
         self.voice_mode = value.lower()
-        self.voice_status_var.set(f"Voice mode: {value}")
+        if self.voice_mode == "offline" and not self.voice_controller.model_path.exists():
+            self.voice_status_var.set("Warning: Vosk model missing. Offline mode unavailable.")
+        else:
+            self.voice_status_var.set(f"Voice mode: {value}")
 
     def _start_voice(self):
         if self.voice_busy or not self.running:
@@ -366,6 +389,7 @@ class AirControlApp(ctk.CTk):
         self.pause_button.configure(text="Enable Mouse Control" if self.paused else "Pause Mouse Control")
         self.control_var.set("Mouse control: DISABLED" if self.paused else "Mouse control: ENABLED")
         self.status_var.set("Mouse control paused" if self.paused else "Mouse control active")
+        self.last_action_var.set("Last action: Mouse control paused" if self.paused else "Last action: Mouse control active")
         self._publish_control((None, None, False))
 
     def _update_dashboard(self):
@@ -394,6 +418,15 @@ class AirControlApp(ctk.CTk):
                 self.voice_status_var.set(status.split(":", 1)[1])
             elif status.startswith("Heard:"):
                 self.voice_status_var.set(status)
+            elif status.startswith("CAMERA_ERROR:"):
+                msg = status.split(":", 1)[1]
+                self.status_var.set(f"Camera: {msg}")
+                self.video_label.configure(image="", text=f"Camera Unavailable\n\n{msg}")
+            elif status == "Camera connected":
+                self.status_var.set("Camera: Connected")
+            elif status.startswith("Action:"):
+                self.last_action_var.set(f"Last action: {status.split(':', 1)[1].strip()}")
+                self.status_var.set(status)
             else:
                 self.status_var.set(status)
 
