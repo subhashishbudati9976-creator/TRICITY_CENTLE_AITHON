@@ -87,6 +87,56 @@ class TestVoiceController(unittest.TestCase):
             self.assertIsNone(error)
             self.assertEqual(text, "scroll down")
 
+    @patch("speech_recognition.Microphone")
+    def test_online_request_error(self, mock_mic):
+        mock_source = MagicMock(spec=sr.AudioSource)
+        mock_mic.return_value.__enter__.return_value = mock_source
+        fake_audio = MagicMock()
+        self.vc.recognizer.listen = MagicMock(return_value=fake_audio)
+        self.vc.recognizer.recognize_google = MagicMock(side_effect=sr.RequestError("API connection lost"))
+
+        text, error = self.vc.listen_once(mode="online")
+        self.assertEqual(text, "")
+        self.assertIn("Online recognition unavailable", error)
+
+    @patch("speech_recognition.Microphone")
+    def test_offline_empty_recognition(self, mock_mic):
+        mock_source = MagicMock(spec=sr.AudioSource)
+        mock_mic.return_value.__enter__.return_value = mock_source
+        fake_audio = MagicMock()
+        fake_audio.get_raw_data.return_value = b"\x00" * 3200
+        self.vc.recognizer.listen = MagicMock(return_value=fake_audio)
+
+        with patch("vosk.KaldiRecognizer") as mock_kaldi_cls:
+            mock_kaldi_instance = MagicMock()
+            mock_kaldi_instance.FinalResult.return_value = json.dumps({"text": ""})
+            mock_kaldi_cls.return_value = mock_kaldi_instance
+
+            self.vc._load_vosk_model = MagicMock(return_value=MagicMock())
+
+            text, error = self.vc.listen_once(mode="offline")
+            self.assertEqual(text, "")
+            self.assertIn("No speech recognized", error)
+
+    @patch("speech_recognition.Microphone")
+    def test_unintelligible_speech_controlled_retry(self, mock_mic):
+        mock_source = MagicMock(spec=sr.AudioSource)
+        mock_mic.return_value.__enter__.return_value = mock_source
+        fake_audio = MagicMock()
+        self.vc.recognizer.listen = MagicMock(return_value=fake_audio)
+        # First call fails with UnknownValueError, second call succeeds with "Volume Up"
+        self.vc.recognizer.recognize_google = MagicMock(side_effect=[sr.UnknownValueError(), "Volume Up"])
+
+        status_updates = []
+        text, error = self.vc.listen_once(
+            mode="online",
+            on_status=lambda s: status_updates.append(s),
+            max_retries=1,
+        )
+        self.assertIsNone(error)
+        self.assertEqual(text, "Volume Up")
+        self.assertIn("Speech unclear. Listening again...", status_updates)
+
     def test_close_releases_resources(self):
         self.vc._vosk_model = "mock_model"
         self.vc.close()

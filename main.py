@@ -276,7 +276,10 @@ class AirControlApp(ctk.CTk):
 
     def _voice_worker(self, mode):
         try:
-            recognized_text, error = self.voice_controller.listen_once(mode)
+            recognized_text, error = self.voice_controller.listen_once(
+                mode=mode,
+                on_status=lambda msg: self.status_queue.put(f"VOICE_STATUS:{msg}"),
+            )
             if error:
                 self.status_queue.put(f"VOICE_ERROR:{error}")
             elif recognized_text:
@@ -385,6 +388,8 @@ class AirControlApp(ctk.CTk):
                 self.pause_button.configure(text="Pause Mouse Control")
             elif status == "VOICE_READY":
                 self.listen_button.configure(state="normal")
+            elif status.startswith("VOICE_STATUS:"):
+                self.voice_status_var.set(status.split(":", 1)[1])
             elif status.startswith("VOICE_ERROR:"):
                 self.voice_status_var.set(status.split(":", 1)[1])
             elif status.startswith("Heard:"):
