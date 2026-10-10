@@ -1,0 +1,10 @@
+
+opencv-python
+mediapipe
+numpy
+customtkinter
+pyautogui
+SpeechRecognition
+vosk
+PyAudio
+pytest
