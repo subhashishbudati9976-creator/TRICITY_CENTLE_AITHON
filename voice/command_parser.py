@@ -5,7 +5,6 @@ Supports multi-step compound commands, entity extraction, and domain classificat
 
 from dataclasses import dataclass, field
 import re
-import string
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -27,13 +26,15 @@ class CommandParser:
 
     @staticmethod
     def normalize_text(text: Optional[str]) -> str:
-        """Strips punctuation, lowercases, and collapses colloquial speech artifacts."""
+        """Normalize command phrasing while retaining query text and URL characters."""
         if not text:
             return ""
 
-        cleaned = text.lower().replace("-", " ")
-        # Keep alphanumeric, spaces, and essential query characters
-        cleaned = cleaned.translate(str.maketrans("", "", string.punctuation))
+        cleaned = text.lower().strip()
+        cleaned = re.sub(r"[!?;,.]+$", "", cleaned)
+        cleaned = re.sub(r"\b(linked|git|you)[- ](in|hub|tube)\b", r"\1 \2", cleaned)
+        cleaned = re.sub(r"\b(double|right|left)[- ]?click\b", r"\1 click", cleaned)
+        cleaned = re.sub(r"[^\w\s+#:/@?&=.%'\-]", " ", cleaned)
         tokens = cleaned.split()
         normalized = " ".join(tokens)
 
@@ -69,8 +70,8 @@ class CommandParser:
         segments = re.split(r"\s+(?:and then|then)\s+", text, flags=re.IGNORECASE)
 
         final_segments: List[str] = []
-        # Pattern to split '... and (open|search|launch|show|minimize|take)...'
-        cmd_verbs = r"(?:open|launch|start|search|show|minimize|maximize|take|switch|copy|paste|scroll|volume|lock)"
+        # Pattern to split '... and (open|close|search|launch|show|minimize|take)...'
+        cmd_verbs = r"(?:open|close|quit|exit|launch|start|search|show|find|locate|look|type|write|minimize|maximize|take|switch|copy|paste|scroll|volume|lock)"
         and_verb_pattern = re.compile(rf"\s+and\s+(?={cmd_verbs}\b)", re.IGNORECASE)
 
         for seg in segments:
@@ -85,6 +86,7 @@ class CommandParser:
     def parse_single_segment(self, segment: str) -> ActionRequest:
         """Classifies a single normalized instruction into an ActionRequest."""
         cmd = self.normalize_text(segment)
+        cmd = re.sub(r"^please\s+", "", cmd)
         if not cmd:
             return ActionRequest(domain="EMPTY", intent="EMPTY", raw_segment=segment)
 
@@ -92,10 +94,10 @@ class CommandParser:
         # 1. High-Impact Dangerous Commands (Safety Block)
         # -------------------------------------------------------------
         dangerous_matches = [
-            r"\b(?:shutdown|shut down)\b",
-            r"\b(?:restart|reboot)\b",
-            r"\b(?:format c|delete all files|rm -rf)\b",
-            r"\b(?:cmd|powershell|terminal|bash|curl|eval)\b",
+            r"^(?:shutdown|shut down|restart|reboot)\b",
+            r"^(?:format c(?::|\\)?|delete all files|remove all files|rm\s+-rf)(?:\s|$)",
+            r"^(?:open|launch|start)\s+(?:cmd(?:\.exe)?|command prompt|powershell|windows terminal|terminal|bash|python(?:\.exe)?)\b",
+            r"^(?:run|execute)\s+(?:a\s+)?(?:shell|command|script|powershell|cmd)\b",
         ]
         for dm in dangerous_matches:
             if re.search(dm, cmd):
@@ -132,6 +134,44 @@ class CommandParser:
                 params={"query": query},
                 raw_segment=segment,
                 description=f"Search YouTube: '{query}'",
+            )
+
+        site_search = re.search(
+            r"^(?:search(?: for)?|look up)\s+(.+?)\s+(?:on|using)\s+(google|youtube)$",
+            cmd,
+        )
+        if site_search:
+            query, site = site_search.groups()
+            intent = "SEARCH_YOUTUBE" if site == "youtube" else "SEARCH_GOOGLE"
+            return ActionRequest(
+                domain="BROWSER",
+                intent=intent,
+                params={"query": query.strip()},
+                raw_segment=segment,
+                description=f"Search {site.title()}: '{query.strip()}'",
+            )
+
+        general_search = re.search(
+            r"^(?:search(?: the web)?(?: for)?|look up|google)\s+(.+)$", cmd
+        )
+        if general_search:
+            query = general_search.group(1).strip()
+            return ActionRequest(
+                domain="BROWSER",
+                intent="SEARCH_GOOGLE",
+                params={"query": query},
+                raw_segment=segment,
+                description=f"Search Google: '{query}'",
+            )
+
+        url_match = re.match(r"^(?:open|go to|navigate to)\s+(https?://\S+)$", cmd)
+        if url_match:
+            return ActionRequest(
+                domain="BROWSER",
+                intent="OPEN_URL",
+                params={"url": url_match.group(1)},
+                raw_segment=segment,
+                description=f"Open {url_match.group(1)}",
             )
 
         # -------------------------------------------------------------
@@ -196,6 +236,35 @@ class CommandParser:
                 description="Open Latest Screenshot",
             )
 
+        if cmd in (
+            "find the latest screenshot",
+            "find latest screenshot",
+            "locate the latest screenshot",
+            "find my latest screenshot",
+        ):
+            return ActionRequest(
+                domain="FILE_SYSTEM",
+                intent="FIND_LATEST_SCREENSHOT",
+                raw_segment=segment,
+                description="Find Latest Screenshot",
+            )
+
+        file_search = re.search(
+            r"^(?:find|locate|look for)\s+(?:my|the|a|an)\s+(.+?)"
+            r"(?:\s+in\s+(downloads|documents|desktop|pictures|screenshots|project))?"
+            r"(?:\s+folder)?$",
+            cmd,
+        )
+        if file_search:
+            query, folder = file_search.groups()
+            return ActionRequest(
+                domain="FILE_SYSTEM",
+                intent="FIND_FILE",
+                params={"query": query.strip(), "folder_key": (folder or "documents").removesuffix(" folder")},
+                raw_segment=segment,
+                description=f"Find '{query.strip()}'",
+            )
+
         # Known folders (Downloads, Documents, Desktop, Screenshots, Project Folder)
         folder_match = re.search(r"^(?:open|show)\s+(downloads|documents|desktop|pictures|screenshots|my project folder|project folder|project)$", cmd)
         if folder_match:
@@ -206,6 +275,14 @@ class CommandParser:
                 params={"folder_key": f_key},
                 raw_segment=segment,
                 description=f"Open {f_key.title()}",
+            )
+
+        if cmd in ("open recycle bin", "open the recycle bin", "show recycle bin"):
+            return ActionRequest(
+                domain="FILE_SYSTEM",
+                intent="OPEN_RECYCLE_BIN",
+                raw_segment=segment,
+                description="Open Recycle Bin",
             )
 
         # Specific file e.g. "open this pdf", "open report pdf"
@@ -231,6 +308,20 @@ class CommandParser:
             return ActionRequest(domain="WINDOW", intent="SWITCH_APP", raw_segment=segment, description="Switch Application")
         if cmd in ("show desktop", "desktop"):
             return ActionRequest(domain="WINDOW", intent="SHOW_DESKTOP", raw_segment=segment, description="Show Desktop")
+        if cmd in (
+            "close the active window",
+            "close active window",
+            "close current window",
+            "close the current window",
+            "close this window",
+            "close active application",
+            "close the current application",
+            "close current application",
+            "close active app",
+            "close the current app",
+            "close current app",
+        ):
+            return ActionRequest(domain="WINDOW", intent="CLOSE_ACTIVE_WINDOW", raw_segment=segment, description="Close Active Window")
 
         # -------------------------------------------------------------
         # 7. System & Keyboard Controls
@@ -262,10 +353,45 @@ class CommandParser:
             return ActionRequest(domain="SYSTEM", intent="ZOOM_OUT", raw_segment=segment, description="Zoom Out")
         if cmd in ("mute", "unmute"):
             return ActionRequest(domain="SYSTEM", intent="MUTE", raw_segment=segment, description="Mute / Unmute")
-        if cmd == "volume up":
+        if cmd in ("volume up", "turn volume up", "turn the volume up", "increase volume", "raise volume"):
             return ActionRequest(domain="SYSTEM", intent="VOLUME_UP", raw_segment=segment, description="Volume Up")
-        if cmd == "volume down":
+        if cmd in ("volume down", "turn volume down", "turn the volume down", "decrease volume", "lower volume"):
             return ActionRequest(domain="SYSTEM", intent="VOLUME_DOWN", raw_segment=segment, description="Volume Down")
+
+        if cmd in ("increase text size", "make text bigger", "larger text", "text size up"):
+            return ActionRequest(
+                domain="SYSTEM",
+                intent="OPEN_ACCESSIBILITY_SETTINGS",
+                raw_segment=segment,
+                description="Open Windows accessibility text-size settings",
+            )
+
+        type_text = re.match(
+            r"^(?:please\s+)?(?:type|write)\s+(.+?)\s*$", segment, flags=re.IGNORECASE
+        )
+        if type_text:
+            return ActionRequest(
+                domain="SYSTEM",
+                intent="TYPE_TEXT",
+                params={"text": type_text.group(1)},
+                raw_segment=segment,
+                description="Type requested text",
+            )
+
+        if cmd in (
+            "what is happening",
+            "what is happening in the application",
+            "explain what is happening",
+            "explain what is happening in the application",
+            "explain the current status",
+            "what is aircontrol doing",
+        ):
+            return ActionRequest(
+                domain="SYSTEM",
+                intent="EXPLAIN_STATUS",
+                raw_segment=segment,
+                description="Explain AirControl status",
+            )
 
         if cmd in ("move cursor left", "move left", "mouse left"):
             return ActionRequest(domain="SYSTEM", intent="MOVE_CURSOR", params={"dx": -100, "dy": 0, "name": "Move Left"}, raw_segment=segment)
@@ -289,9 +415,11 @@ class CommandParser:
             return ActionRequest(domain="GESTURE", intent="PAUSE_CONTROL", raw_segment=segment, description="Pause Mouse Control")
         if cmd in ("resume control", "resume", "resume mouse", "resume tracking"):
             return ActionRequest(domain="GESTURE", intent="RESUME_CONTROL", raw_segment=segment, description="Resume Mouse Control")
+        if cmd in ("cancel task", "cancel current task", "stop current task", "cancel request"):
+            return ActionRequest(domain="GESTURE", intent="CANCEL_TASK", raw_segment=segment, description="Cancel Current Task")
 
         # -------------------------------------------------------------
-        # 9. General Application Launch Commands (Dynamic Discovery)
+        # 9. General Application Launch & Close Commands (Dynamic Discovery)
         # -------------------------------------------------------------
         # e.g. "open spotify", "launch visual studio code", "start calculator"
         app_match = re.search(r"^(?:open|launch|start)\s+(.+)$", cmd)
@@ -303,6 +431,44 @@ class CommandParser:
                 params={"app_name": app_name},
                 raw_segment=segment,
                 description=f"Launch Application: {app_name.title()}",
+            )
+
+        # e.g. "close notepad", "close calculator", "quit chrome", "close it"
+        close_app_match = re.search(r"^(?:close|quit|exit|terminate)\s+(.+)$", cmd)
+        if close_app_match:
+            target = close_app_match.group(1).strip()
+            if target in (
+                "active window",
+                "the active window",
+                "current window",
+                "the current window",
+                "this window",
+                "active application",
+                "the active application",
+                "current application",
+                "the current application",
+                "active app",
+                "the active app",
+            ):
+                return ActionRequest(
+                    domain="WINDOW",
+                    intent="CLOSE_ACTIVE_WINDOW",
+                    raw_segment=segment,
+                    description="Close Active Window",
+                )
+            if target in ("tab", "current tab", "this tab", "the tab"):
+                return ActionRequest(
+                    domain="BROWSER",
+                    intent="CLOSE_TAB",
+                    raw_segment=segment,
+                    description="Close Browser Tab",
+                )
+            return ActionRequest(
+                domain="APPLICATION",
+                intent="CLOSE_APP",
+                params={"app_name": target},
+                raw_segment=segment,
+                description=f"Close Application: {target.title()}",
             )
 
         # -------------------------------------------------------------
@@ -319,6 +485,22 @@ class CommandParser:
     def parse(self, text: str) -> List[ActionRequest]:
         """
         Parses input speech (potentially multi-step) into a sequence of ActionRequests.
+        Resolves follow-up pronouns (e.g. 'open vs code and then close it').
         """
         segments = self.split_compound_commands(text)
-        return [self.parse_single_segment(seg) for seg in segments]
+        requests: List[ActionRequest] = []
+        last_app: Optional[str] = None
+
+        for seg in segments:
+            req = self.parse_single_segment(seg)
+            if req.domain == "APPLICATION" and req.intent == "LAUNCH_APP":
+                last_app = req.params.get("app_name")
+            elif req.domain == "APPLICATION" and req.intent == "CLOSE_APP":
+                app_target = req.params.get("app_name", "").lower()
+                if app_target in ("it", "this", "that", "this app", "the app") and last_app:
+                    req.params["app_name"] = last_app
+                    req.description = f"Close Application: {last_app.title()}"
+            requests.append(req)
+
+        return requests
+

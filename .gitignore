@@ -1,5 +1,5 @@
-@"
 .venv/
+.venv*/
 venv/
 __pycache__/
 *.py[cod]
@@ -9,9 +9,5 @@ __pycache__/
 .pytest_cache/
 .idea/
 .vscode/
-.venv/
-__pycache__/
-.env
 models/
-"@ | Out-File -Encoding utf8 .gitignore
-.venv312/
+.venv312

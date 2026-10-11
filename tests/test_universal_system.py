@@ -376,7 +376,10 @@ class TestSafetyBlocks(unittest.TestCase):
 
     def setUp(self):
         self.mock_runner = MagicMock()
-        self.router = CommandRouter(process_runner=self.mock_runner)
+        self.router = CommandRouter(
+            process_runner=self.mock_runner,
+            ai_planner=None,
+        )
         self.context = MagicMock()
         self.context.status_queue = MagicMock()
         self.context.paused = False
@@ -421,7 +424,10 @@ class TestRouterEndToEnd(unittest.TestCase):
 
     def setUp(self):
         self.mock_runner = MagicMock()
-        self.router = CommandRouter(process_runner=self.mock_runner)
+        self.router = CommandRouter(
+            process_runner=self.mock_runner,
+            ai_planner=None,
+        )
         self.context = MagicMock()
         self.context.status_queue = MagicMock()
         self.context.paused = False

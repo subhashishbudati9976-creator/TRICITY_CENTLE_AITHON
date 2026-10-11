@@ -1,4 +1,3 @@
-
 opencv-python
 mediapipe
 numpy
@@ -8,3 +7,8 @@ SpeechRecognition
 vosk
 PyAudio
 pytest
+google-genai
+python-dotenv
+fastapi
+uvicorn
+websockets

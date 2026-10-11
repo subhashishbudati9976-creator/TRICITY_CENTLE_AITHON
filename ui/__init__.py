@@ -12,6 +12,8 @@ __all__ = [
     "COLOR_STONE",
     "COLOR_SAGE",
     "COLOR_ACCENT_BG",
+    "FONT_DISPLAY",
+    "FONT_BODY",
     "FONT_SERIF",
     "FONT_SANS",
     "FONT_MONO",

@@ -127,7 +127,9 @@ The main AirControl dashboard will appear in a modern dark-mode window (`1100x72
    - **Last Action:** Confirms the most recently executed desktop operation (e.g., `Last action: Click`, `Last action: Zoom In`).
    - **Voice Mode Selector:** Segmented switch between **Online** (Google Cloud STT) and **Offline** (Vosk local engine).
    - **Voice Status:** Displays microphone listening state, transcription text, or errors.
+   - **Assistant Status:** Shows the interpreted plan, current action, completion, or cancellation.
    - **Listen for Command Button:** Initiates microphone capture for one voice phrase.
+   - **Cancel Task Button:** Requests cancellation of an in-progress multi-step task.
 4. **Bottom Footer:**
    - Displays safety instructions and reminders regarding the PyAutoGUI corner emergency fail-safe.
 
@@ -170,8 +172,9 @@ AirControl features a complete desktop voice control system that functions **ind
 1. Click the **"Listen for Command"** button on the right panel.
 2. The button will disable, and the status will display: `Listening (online)...` (or `Listening (offline)...`).
 3. Speak one of the supported commands clearly into your microphone.
-4. The status updates to `Recognizing...`, displays `Heard: <command>`, and executes the action immediately.
+4. The status updates to `Recognizing...`, displays `Heard: <command>`, and executes the action immediately. The assistant status readout shows the interpreted plan and current step.
 5. The button automatically re-enables and returns to `Voice: Ready`.
+6. Use **Cancel Task** while a multi-step request is running to stop it before the next action.
 
 ### 6.3 Supported Voice Commands Reference
 
@@ -193,9 +196,28 @@ AirControl features a complete desktop voice control system that functions **ind
 | | `"move cursor down"` / `"move down"` | Nudges cursor 100 pixels downward |
 | **Control State** | `"pause control"` or `"pause"` | Temporarily pauses gesture mouse tracking |
 | | `"resume control"` or `"resume"` | Resumes gesture mouse tracking |
+| **Search & Files** | `"search for tutorials on Google"` | Opens a browser search for the requested query |
+| | `"find my resume in Documents folder"` | Searches the selected known folder with bounded depth/results |
+| | `"open Recycle Bin"` / `"open Downloads"` | Opens the corresponding Windows location |
+| **Assistant** | `"type Hello there"` | Types the requested text in the focused application |
+| | `"increase text size"` | Opens Windows accessibility text-size settings |
+| | `"explain what is happening"` | Reports the app's current observable status |
+| | `"cancel task"` | Stops a running multi-step task before its next action |
 
 > [!IMPORTANT]
 > **Safety Rejection:** AirControl features a strict command allowlist. If an unrecognized or potentially dangerous command is spoken (e.g., *"delete all files"* or *"open command prompt"*), AirControl logs `Unknown command: <text>` and executes **zero** system actions.
+
+### 6.4 Optional AI Intent Interpretation
+Built-in command parsing and Offline (Vosk) recognition do not require AI credentials or network access. To enable conversational answers and flexible interpretation of supported actions:
+
+1. Copy `.env.example` to `.env` in the project root.
+2. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/app/apikey) and set `AIRCONTROL_AI_API_KEY` in `.env`.
+3. `AIRCONTROL_AI_MODEL` defaults to `gemini-3.5-flash-lite`; optionally set `AIRCONTROL_AI_TIMEOUT_SECONDS` (1–60, default 12). AirControl does not silently switch models.
+4. Restart AirControl so it loads the configuration.
+
+AirControl uses Google's official `google-genai` SDK. With the default model configuration, ask a question such as `"What can you do?"` or request a supported action in natural language. The assistant returns questions as text without executing actions; action plans are validated against the local registry before running. Follow-up context is limited to the last three conversation turns in memory. Basic voice-command and implemented-gesture help works locally when AI is not configured.
+
+When AI is enabled and **Online** voice mode is selected, recognized text and that short conversation context are sent to Google; microphone audio is not sent by the planner. Selecting **Offline** disables cloud AI interpretation as well as online speech recognition, and uses Vosk plus local capability/gesture help. Provider answers are not verified system diagnostics. The AI can only execute registered actions and cannot run arbitrary shell commands or code. Unsupported requests must be explained rather than claimed as completed. Workstation lock and closing a browser tab require confirmation. Never commit `.env` or share its API key.
 
 ---
 

@@ -66,7 +66,16 @@ class TestGestureProcessor(unittest.TestCase):
         self.assertLessEqual(y2, 1080 - 15)
 
     def test_pinch_hysteresis_schmitt_trigger(self):
-        # Hand starts open
+        # A relaxed open hand arms detection after two stable frames.
+        for _ in range(2):
+            pinching, _ = self.processor.calculate_pinch(
+                index_x=0.5, index_y=0.5,
+                thumb_x=0.5, thumb_y=0.55,
+                wrist_x=0.5, wrist_y=0.7,
+                middle_mcp_x=0.5, middle_mcp_y=0.6
+            )
+        self.assertFalse(pinching)
+
         # ratio 0.30: not yet below down_threshold (0.28) -> should remain False
         pinching, r = self.processor.calculate_pinch(
             index_x=0.5, index_y=0.5,
@@ -76,32 +85,52 @@ class TestGestureProcessor(unittest.TestCase):
         )
         self.assertFalse(pinching)
 
-        # ratio 0.25: drops below down_threshold (0.28) -> becomes True
-        pinching, r = self.processor.calculate_pinch(
-            index_x=0.5, index_y=0.5,
-            thumb_x=0.5, thumb_y=0.525,  # dist 0.025 -> ratio 0.25
-            wrist_x=0.5, wrist_y=0.7,
-            middle_mcp_x=0.5, middle_mcp_y=0.6
-        )
-        self.assertTrue(pinching)
-
-        # ratio 0.32: relaxes to 0.32, which is between 0.28 and 0.35 -> hysteresis maintains True!
-        pinching, r = self.processor.calculate_pinch(
-            index_x=0.5, index_y=0.5,
-            thumb_x=0.5, thumb_y=0.532,  # dist 0.032 -> ratio 0.32
-            wrist_x=0.5, wrist_y=0.7,
-            middle_mcp_x=0.5, middle_mcp_y=0.6
-        )
-        self.assertTrue(pinching)
-
-        # ratio 0.40: relaxes above up_threshold (0.35) -> becomes False!
-        pinching, r = self.processor.calculate_pinch(
-            index_x=0.5, index_y=0.5,
-            thumb_x=0.5, thumb_y=0.54,  # dist 0.04 -> ratio 0.40
-            wrist_x=0.5, wrist_y=0.7,
-            middle_mcp_x=0.5, middle_mcp_y=0.6
+        # Two consecutive samples below the down threshold activate pinching.
+        pinching, _ = self.processor.calculate_pinch(
+            index_x=0.5, index_y=0.5, thumb_x=0.5, thumb_y=0.525,
+            wrist_x=0.5, wrist_y=0.7, middle_mcp_x=0.5, middle_mcp_y=0.6
         )
         self.assertFalse(pinching)
+        pinching, _ = self.processor.calculate_pinch(
+            index_x=0.5, index_y=0.5, thumb_x=0.5, thumb_y=0.525,
+            wrist_x=0.5, wrist_y=0.7, middle_mcp_x=0.5, middle_mcp_y=0.6
+        )
+        self.assertTrue(pinching)
+
+        # Hysteresis holds the state between thresholds and confirms release twice.
+        pinching, _ = self.processor.calculate_pinch(
+            index_x=0.5, index_y=0.5, thumb_x=0.5, thumb_y=0.532,
+            wrist_x=0.5, wrist_y=0.7, middle_mcp_x=0.5, middle_mcp_y=0.6
+        )
+        self.assertTrue(pinching)
+        pinching, _ = self.processor.calculate_pinch(
+            index_x=0.5, index_y=0.5, thumb_x=0.5, thumb_y=0.54,
+            wrist_x=0.5, wrist_y=0.7, middle_mcp_x=0.5, middle_mcp_y=0.6
+        )
+        self.assertTrue(pinching)
+        pinching, _ = self.processor.calculate_pinch(
+            index_x=0.5, index_y=0.5, thumb_x=0.5, thumb_y=0.54,
+            wrist_x=0.5, wrist_y=0.7, middle_mcp_x=0.5, middle_mcp_y=0.6
+        )
+        self.assertFalse(pinching)
+
+    def test_pinch_rearms_only_after_open_hand_following_tracking_loss(self):
+        open_landmarks = (0.5, 0.5, 0.5, 0.55, 0.5, 0.7, 0.5, 0.6)
+        closed_landmarks = (0.5, 0.5, 0.5, 0.525, 0.5, 0.7, 0.5, 0.6)
+        for _ in range(2):
+            self.processor.calculate_pinch(*open_landmarks)
+        self.assertFalse(self.processor.calculate_pinch(*closed_landmarks)[0])
+        self.assertTrue(self.processor.calculate_pinch(*closed_landmarks)[0])
+
+        self.processor.reset_pinch_detection()
+        self.assertFalse(self.processor.calculate_pinch(*closed_landmarks)[0])
+        self.assertFalse(self.processor.calculate_pinch(*closed_landmarks)[0])
+        self.assertFalse(self.processor.pinch_detected)
+
+        for _ in range(2):
+            self.processor.calculate_pinch(*open_landmarks)
+        self.assertFalse(self.processor.calculate_pinch(*closed_landmarks)[0])
+        self.assertTrue(self.processor.calculate_pinch(*closed_landmarks)[0])
 
     def test_click_freeze_anchors_cursor_during_pinch(self):
         t = 1000.0
@@ -123,6 +152,49 @@ class TestGestureProcessor(unittest.TestCase):
         # Position MUST remain anchored to prevent slipping off the button!
         self.assertEqual(sx3, frozen_anchor_x)
         self.assertEqual(sy3, frozen_anchor_y)
+
+    def test_detected_pinch_triggers_one_click_and_release_allows_next_click(self):
+        t = 1000.0
+
+        def process_landmarks(thumb_y, timestamp):
+            pinching, _ = self.processor.calculate_pinch(
+                index_x=0.5,
+                index_y=0.5,
+                thumb_x=0.5,
+                thumb_y=thumb_y,
+                wrist_x=0.5,
+                wrist_y=0.7,
+                middle_mcp_x=0.5,
+                middle_mcp_y=0.6,
+            )
+            return self.processor.process_frame(0.5, 0.5, pinching, timestamp=timestamp)[2]
+
+        process_landmarks(0.55, t - 0.06)
+        process_landmarks(0.55, t - 0.03)
+
+        # The camera-side detector must not pre-set the mouse worker's click state.
+        self.assertFalse(process_landmarks(0.525, t))
+        self.assertTrue(process_landmarks(0.525, t + 0.03))
+        self.assertTrue(self.processor.is_pinching)
+
+        # Holding the pinch and passing the release threshold must not repeat a click.
+        self.assertFalse(process_landmarks(0.525, t + 0.06))
+        self.assertFalse(process_landmarks(0.54, t + 0.09))
+        self.assertFalse(process_landmarks(0.54, t + 0.12))
+        self.assertFalse(self.processor.is_pinching)
+
+        # A later, distinct pinch transition can click again after the debounce period.
+        self.assertFalse(process_landmarks(0.525, t + 0.50))
+        self.assertTrue(process_landmarks(0.525, t + 0.53))
+
+    def test_click_cooldown_blocks_a_fast_release_and_repinch(self):
+        t = 1000.0
+        self.assertFalse(self.processor.process_frame(0.5, 0.5, False, timestamp=t)[2])
+        self.assertTrue(self.processor.process_frame(0.5, 0.5, True, timestamp=t + 0.03)[2])
+        self.assertFalse(self.processor.process_frame(0.5, 0.5, False, timestamp=t + 0.06)[2])
+        self.assertFalse(self.processor.process_frame(0.5, 0.5, True, timestamp=t + 0.10)[2])
+        self.processor.process_frame(0.5, 0.5, False, timestamp=t + 0.14)
+        self.assertTrue(self.processor.process_frame(0.5, 0.5, True, timestamp=t + 0.50)[2])
 
     def test_missing_landmark_grace_hold(self):
         t = 1000.0

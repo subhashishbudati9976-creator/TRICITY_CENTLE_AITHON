@@ -1,9 +1,9 @@
 import math
 import queue
-import string
 import threading
 import time
 import tkinter as tk
+from tkinter import messagebox
 import traceback
 
 import cv2
@@ -25,9 +25,9 @@ from ui.theme import (
     COLOR_STONE,
     COLOR_VERMILION,
     COLOR_VERMILION_HOVER,
+    FONT_DISPLAY,
     FONT_MONO,
     FONT_SANS,
-    FONT_SERIF,
 )
 from vision.gesture_processor import GestureProcessor
 from voice.voice_controller import VoiceController
@@ -53,21 +53,34 @@ class AirControlApp(ctk.CTk):
         # Shared state and queues MUST exist before any worker starts.
         self.running = True
         self.paused = True
+        self.camera_connected = False
+        self.current_action_description = ""
         self.gesture_processor = GestureProcessor(screen_w=SCREEN_W, screen_h=SCREEN_H)
-        self.command_router = CommandRouter(app_context=self)
+        self.command_router = CommandRouter(
+            app_context=self, confirmation_fn=self._request_action_confirmation
+        )
         self.frame_queue = queue.Queue(maxsize=1)
         self.control_queue = queue.Queue(maxsize=1)
         self.status_queue = queue.Queue()
+        self.assistant_queue = queue.Queue()
         self.command_queue = queue.Queue()
+        self.task_cancel_event = threading.Event()
+        self.task_active_event = threading.Event()
         self.voice_controller = VoiceController()
         self.voice_mode = "online"
         self.voice_busy = False
+        self.fullscreen_window = None
+        self.fullscreen_label = None
 
         self.status_var = tk.StringVar(master=self, value="Camera starting...")
         self.hand_var = tk.StringVar(master=self, value="Hands detected: 0")
         self.control_var = tk.StringVar(master=self, value="Mouse control: DISABLED")
         self.last_action_var = tk.StringVar(master=self, value="Last action: None")
         self.voice_status_var = tk.StringVar(master=self, value="Voice: Ready")
+        self.recognized_text_var = tk.StringVar(master=self, value="No request recognized yet.")
+        self.assistant_status_var = tk.StringVar(
+            master=self, value="Ready. Built-in offline intents are available."
+        )
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._close_app)
@@ -103,7 +116,7 @@ class AirControlApp(ctk.CTk):
         title_lbl = ctk.CTkLabel(
             brand_frame,
             text="AIRCONTROL",
-            font=ctk.CTkFont(family=FONT_SERIF, size=24, weight="bold"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=24, weight="bold"),
             text_color=COLOR_IVORY,
         )
         title_lbl.pack(anchor="w")
@@ -144,7 +157,7 @@ class AirControlApp(ctk.CTk):
             fg_color=COLOR_VERMILION,
             hover_color=COLOR_VERMILION_HOVER,
             text_color=COLOR_IVORY,
-            font=ctk.CTkFont(family=FONT_SANS, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=12, weight="bold"),
             corner_radius=4,
             height=34,
             width=160,
@@ -176,6 +189,19 @@ class AirControlApp(ctk.CTk):
 
         sec1 = SectionHeader(left_panel, "01", "Optical Sensor & Landmark Matrix", "640x480 @ 30FPS")
         sec1.grid(row=0, column=0, padx=14, pady=(12, 6), sticky="ew")
+        sec1.grid_columnconfigure(1, weight=1)
+        self.expand_btn = ctk.CTkButton(
+            sec1,
+            text="⛶ FULLSCREEN",
+            width=110,
+            height=24,
+            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+            fg_color=COLOR_PANEL_BORDER,
+            hover_color=COLOR_VERMILION,
+            text_color=COLOR_IVORY,
+            command=self._toggle_fullscreen_webcam,
+        )
+        self.expand_btn.grid(row=0, column=3, padx=(10, 0), sticky="e")
 
         # Video frame viewport with thin crisp border
         video_container = ctk.CTkFrame(
@@ -230,7 +256,20 @@ class AirControlApp(ctk.CTk):
             font=ctk.CTkFont(family=FONT_MONO, size=10),
             text_color=COLOR_SAGE,
         )
-        self.failsafe_badge.grid(row=0, column=2, padx=12, pady=6, sticky="e")
+        self.failsafe_badge.grid(row=0, column=2, padx=12, pady=6)
+
+        self.fullscreen_btn = ctk.CTkButton(
+            telemetry_bar,
+            text="⛶ EXPAND",
+            width=84,
+            height=22,
+            font=ctk.CTkFont(family=FONT_MONO, size=10, weight="bold"),
+            fg_color=COLOR_PANEL_BORDER,
+            hover_color=COLOR_VERMILION,
+            text_color=COLOR_IVORY,
+            command=self._toggle_fullscreen_webcam,
+        )
+        self.fullscreen_btn.grid(row=0, column=3, padx=(6, 12), pady=6, sticky="e")
 
         # Quick reference protocol matrix
         ref_card = ctk.CTkFrame(
@@ -300,6 +339,7 @@ class AirControlApp(ctk.CTk):
         )
         voice_card.grid(row=0, column=0, pady=(0, 8), sticky="ew")
         voice_card.grid_columnconfigure(0, weight=1)
+        voice_card.grid_columnconfigure(1, weight=1)
 
         sec2 = SectionHeader(voice_card, "02", "Acoustic Command Translator")
         sec2.grid(row=0, column=0, padx=12, pady=(10, 6), sticky="ew")
@@ -352,11 +392,28 @@ class AirControlApp(ctk.CTk):
         ctk.CTkLabel(
             v_disp,
             textvariable=self.voice_status_var,
-            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            font=ctk.CTkFont(family=FONT_SANS, size=11, weight="bold"),
             text_color=COLOR_IVORY,
             wraplength=380,
             justify="left",
         ).grid(row=0, column=1, padx=4, pady=6, sticky="w")
+
+        ctk.CTkLabel(
+            voice_card,
+            textvariable=self.recognized_text_var,
+            font=ctk.CTkFont(family=FONT_SANS, size=11),
+            text_color=COLOR_STONE,
+            wraplength=420,
+            justify="left",
+        ).grid(row=3, column=0, columnspan=2, padx=12, pady=(2, 4), sticky="ew")
+        ctk.CTkLabel(
+            voice_card,
+            textvariable=self.assistant_status_var,
+            font=ctk.CTkFont(family=FONT_SANS, size=11, weight="bold"),
+            text_color=COLOR_IVORY,
+            wraplength=420,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, padx=12, pady=(2, 5), sticky="ew")
 
         # Listen Action Button
         self.listen_button = ctk.CTkButton(
@@ -366,11 +423,24 @@ class AirControlApp(ctk.CTk):
             fg_color=COLOR_INDIGO,
             hover_color="#364761",
             text_color=COLOR_IVORY,
-            font=ctk.CTkFont(family=FONT_SANS, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=12, weight="bold"),
             corner_radius=4,
             height=32,
         )
-        self.listen_button.grid(row=3, column=0, padx=12, pady=(4, 10), sticky="ew")
+        self.listen_button.grid(row=5, column=0, padx=(12, 4), pady=(4, 10), sticky="ew")
+        self.cancel_button = ctk.CTkButton(
+            voice_card,
+            text="Cancel Task",
+            command=self._cancel_current_task,
+            fg_color=COLOR_PANEL_DARK,
+            hover_color=COLOR_PANEL_BORDER,
+            text_color=COLOR_IVORY,
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=12, weight="bold"),
+            corner_radius=4,
+            height=32,
+            state="disabled",
+        )
+        self.cancel_button.grid(row=5, column=1, padx=(4, 12), pady=(4, 10), sticky="ew")
 
         # --- Section [ 03 ] Audit Log ---
         sec3 = SectionHeader(right_panel, "03", "Chronological Instrument Audit Log")
@@ -493,12 +563,14 @@ class AirControlApp(ctk.CTk):
                 min_detection_confidence=0.6,
                 min_tracking_confidence=0.6,
             ) as hands:
+                self.camera_connected = True
                 self.status_queue.put("Camera connected")
                 while self.running:
                     ok, frame = cap.read()
                     if not ok:
                         consecutive_drops += 1
                         if consecutive_drops == 10:
+                            self.camera_connected = False
                             self.status_queue.put("CAMERA_ERROR:Camera feed interrupted. Reconnecting...")
                         if consecutive_drops > 25:
                             cap.release()
@@ -508,6 +580,7 @@ class AirControlApp(ctk.CTk):
                                 cap = cv2.VideoCapture(0)
                             consecutive_drops = 0
                             if cap.isOpened():
+                                self.camera_connected = True
                                 self.status_queue.put("Camera connected")
                         time.sleep(0.05)
                         continue
@@ -531,12 +604,16 @@ class AirControlApp(ctk.CTk):
 
                         processor = self.__dict__.get("gesture_processor")
                         if processor is not None:
-                            pinching, pinch_ratio = processor.calculate_pinch(
-                                index_tip.x, index_tip.y,
-                                thumb_tip.x, thumb_tip.y,
-                                wrist.x, wrist.y,
-                                middle_mcp.x, middle_mcp.y,
-                            )
+                            if self.paused:
+                                processor.reset_pinch_detection()
+                                pinching, pinch_ratio = False, 1.0
+                            else:
+                                pinching, pinch_ratio = processor.calculate_pinch(
+                                    index_tip.x, index_tip.y,
+                                    thumb_tip.x, thumb_tip.y,
+                                    wrist.x, wrist.y,
+                                    middle_mcp.x, middle_mcp.y,
+                                )
                         else:
                             pinch_distance = math.hypot(index_tip.x - thumb_tip.x, index_tip.y - thumb_tip.y)
                             palm_size = math.hypot(middle_mcp.x - wrist.x, middle_mcp.y - wrist.y)
@@ -544,12 +621,15 @@ class AirControlApp(ctk.CTk):
                             pinching = pinch_ratio < 0.32
 
                         cv2.putText(
-                            frame, "PINCH" if pinching else "OPEN", (20, 40),
+                            frame, f"{'PINCH' if pinching else 'OPEN'} {pinch_ratio:.2f}", (20, 40),
                             cv2.FONT_HERSHEY_SIMPLEX, 1,
                             (0, 255, 0) if pinching else (255, 255, 255), 2,
                         )
                         self._publish_control((index_tip.x, index_tip.y, pinching))
                     else:
+                        processor = self.__dict__.get("gesture_processor")
+                        if processor is not None:
+                            processor.reset_pinch_detection()
                         self._publish_control((None, None, False))
 
                     self.status_queue.put(f"HANDS:{len(detected_hands)}")
@@ -569,6 +649,10 @@ class AirControlApp(ctk.CTk):
             self.status_queue.put(f"Camera error: {exc}")
             traceback.print_exc()
         finally:
+            self.camera_connected = False
+            processor = self.__dict__.get("gesture_processor")
+            if processor is not None:
+                processor.reset_pinch_detection()
             cap.release()
 
     def _mouse_worker(self):
@@ -637,14 +721,18 @@ class AirControlApp(ctk.CTk):
             self.voice_status_var.set(f"Voice mode: {value}")
 
     def _start_voice(self):
-        if self.voice_busy or not self.running:
+        if self.voice_busy or not self.running or self.task_active_event.is_set():
             return
+        self.task_cancel_event.clear()
         self.voice_busy = True
         self.listen_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.recognized_text_var.set("Listening for a request...")
         self.voice_status_var.set(f"Listening ({self.voice_mode})...")
         threading.Thread(target=self._voice_worker, args=(self.voice_mode,), daemon=True).start()
 
     def _voice_worker(self, mode):
+        queued_task = False
         try:
             recognized_text, error = self.voice_controller.listen_once(
                 mode=mode,
@@ -653,8 +741,19 @@ class AirControlApp(ctk.CTk):
             if error:
                 self.status_queue.put(f"VOICE_ERROR:{error}")
             elif recognized_text:
-                self.command_queue.put(recognized_text)
+                self.assistant_queue.put(f"REQUEST:{recognized_text}")
                 self.status_queue.put(f"Heard: {recognized_text}")
+                normalized = " ".join(recognized_text.lower().replace("-", " ").split())
+                if normalized in {
+                    "cancel task", "cancel current task", "stop current task", "cancel request"
+                }:
+                    self.task_cancel_event.set()
+                    self.assistant_queue.put("FINAL:Cancellation requested by voice.")
+                elif self.task_cancel_event.is_set():
+                    self.assistant_queue.put("FINAL:Voice request cancelled before execution.")
+                else:
+                    self.command_queue.put(recognized_text)
+                    queued_task = True
             else:
                 self.status_queue.put("VOICE_ERROR:No speech was recognized")
         except Exception as exc:
@@ -662,16 +761,69 @@ class AirControlApp(ctk.CTk):
             traceback.print_exc()
         finally:
             self.voice_busy = False
-            self.status_queue.put("VOICE_READY")
+            if not queued_task:
+                self.status_queue.put("VOICE_READY")
 
     def _execute_voice_command(self, text):
         """Execute only allowlisted desktop commands; this runs on the action worker."""
         if not text:
             return
+        self.__dict__.setdefault("task_cancel_event", threading.Event())
+        self.__dict__.setdefault("task_active_event", threading.Event())
+        self.__dict__.setdefault("assistant_queue", queue.Queue())
         router = self.__dict__.get("command_router")
         if router is None:
-            router = self.command_router = CommandRouter(app_context=self)
-        router.execute(text, app=self)
+            router = self.command_router = CommandRouter(
+                app_context=self, confirmation_fn=self._request_action_confirmation
+            )
+        self.task_active_event.set()
+        self.assistant_queue.put("RUNNING:Task execution started.")
+        try:
+            router.execute(text, app=self)
+        except Exception as exc:
+            self.assistant_queue.put(f"FINAL:Task failed: {exc}")
+            traceback.print_exc()
+        finally:
+            self.current_action_description = ""
+            self.task_active_event.clear()
+
+    def _cancel_current_task(self):
+        if self.task_active_event.is_set() or self.voice_busy:
+            self.task_cancel_event.set()
+            self.assistant_queue.put(
+                "CANCEL_REQUESTED:Cancellation requested; the current step will stop safely."
+            )
+            self.cancel_button.configure(state="disabled")
+        else:
+            self.assistant_status_var.set("There is no active task to cancel.")
+            self.cancel_button.configure(state="disabled")
+
+    def _request_action_confirmation(self, prompt):
+        """Ask for confirmation on Tk's main thread while the action worker waits."""
+        response = {}
+        completed = threading.Event()
+
+        def show_confirmation():
+            try:
+                response["confirmed"] = messagebox.askyesno(
+                    "AirControl — Confirm action", prompt, parent=self
+                )
+            except Exception as exc:
+                response["error"] = str(exc)
+            finally:
+                completed.set()
+
+        try:
+            self.after(0, show_confirmation)
+        except Exception as exc:
+            self.status_queue.put(f"Confirmation unavailable: {exc}")
+            return False
+
+        deadline = time.monotonic() + 60.0
+        while not completed.wait(0.1):
+            if self.task_cancel_event.is_set() or time.monotonic() >= deadline:
+                return False
+        return bool(response.get("confirmed", False))
 
     def _toggle_pause(self):
         self.paused = not self.paused
@@ -747,6 +899,7 @@ class AirControlApp(ctk.CTk):
                 if t_log:
                     t_log.append_entry("CAMERA", msg[:36], "ERROR")
             elif status == "Camera connected":
+                self.camera_connected = True
                 self.status_var.set("Camera: Connected")
                 if c_badge:
                     c_badge.configure(text="● CAM ONLINE", text_color=COLOR_SAGE)
@@ -764,22 +917,152 @@ class AirControlApp(ctk.CTk):
                 if t_log:
                     t_log.append_entry("SYSTEM", status[:36], "EVENT")
 
+        assistant_queue = self.__dict__.get("assistant_queue")
+        if assistant_queue is not None:
+            while True:
+                try:
+                    assistant_status = assistant_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+                kind, _, detail = assistant_status.partition(":")
+                if kind == "REQUEST":
+                    self.recognized_text_var.set(f"Recognized: {detail}")
+                elif kind == "PLAN":
+                    self.assistant_status_var.set(f"Interpretation: {detail}")
+                elif kind == "STEP":
+                    self.assistant_status_var.set(f"Current action: {detail}")
+                elif kind == "RUNNING":
+                    self.assistant_status_var.set(detail)
+                    self.cancel_button.configure(state="normal")
+                elif kind == "CANCEL_REQUESTED":
+                    self.assistant_status_var.set(detail)
+                elif kind == "FINAL":
+                    self.assistant_status_var.set(detail)
+                    self.cancel_button.configure(state="disabled")
+                    self.listen_button.configure(state="normal")
+                if t_log:
+                    t_log.append_entry("ASSISTANT", assistant_status[:36], kind.upper())
+
         try:
             frame = self.frame_queue.get_nowait()
             image = Image.fromarray(frame)
             width = max(self.video_label.winfo_width(), 400)
             height = max(self.video_label.winfo_height(), 300)
-            image.thumbnail((width, height))
-            photo = ImageTk.PhotoImage(image)
+            img_copy = image.copy()
+            img_copy.thumbnail((width, height))
+            photo = ImageTk.PhotoImage(img_copy)
             self.video_label.configure(image=photo, text="")
             self.video_label.image = photo
+
+            if self.fullscreen_window and self.fullscreen_window.winfo_exists() and self.fullscreen_label:
+                fw = max(self.fullscreen_window.winfo_width(), 640)
+                fh = max(self.fullscreen_window.winfo_height() - 50, 480)
+                fs_img = image.copy()
+                fs_img.thumbnail((fw, fh), Image.Resampling.LANCZOS)
+                photo_fs = ImageTk.PhotoImage(fs_img)
+                self.fullscreen_label.configure(image=photo_fs, text="")
+                self.fullscreen_label.image = photo_fs
         except queue.Empty:
             pass
 
         self.after(20, self._update_dashboard)
 
+    def _open_fullscreen_webcam(self):
+        if self.fullscreen_window and self.fullscreen_window.winfo_exists():
+            self.fullscreen_window.focus_force()
+            return
+
+        win = ctk.CTkToplevel(self)
+        self.fullscreen_window = win
+        win.title("AirControl — Fullscreen Optical Sensor & Gesture Matrix")
+        win.attributes("-fullscreen", True)
+        win.configure(fg_color="#000000")
+
+        # Top overlay HUD
+        top_bar = ctk.CTkFrame(win, fg_color=COLOR_PANEL_DARK, height=44, corner_radius=0)
+        top_bar.pack(fill="x", side="top", padx=0, pady=0)
+        top_bar.pack_propagate(False)
+
+        title_lbl = ctk.CTkLabel(
+            top_bar,
+            text="[ OPTICAL SENSOR & GESTURE MATRIX — LIVE PREVIEW ]",
+            font=ctk.CTkFont(family=FONT_MONO, size=12, weight="bold"),
+            text_color=COLOR_IVORY,
+        )
+        title_lbl.pack(side="left", padx=16)
+
+        hands_lbl = ctk.CTkLabel(
+            top_bar,
+            textvariable=self.hand_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=11),
+            text_color=COLOR_SAGE,
+        )
+        hands_lbl.pack(side="left", padx=16)
+
+        ctrl_lbl = ctk.CTkLabel(
+            top_bar,
+            textvariable=self.control_var,
+            font=ctk.CTkFont(family=FONT_MONO, size=11),
+            text_color=COLOR_STONE,
+        )
+        ctrl_lbl.pack(side="left", padx=16)
+
+        exit_btn = ctk.CTkButton(
+            top_bar,
+            text="✕  EXIT FULLSCREEN (ESC)",
+            font=ctk.CTkFont(family=FONT_MONO, size=11, weight="bold"),
+            fg_color=COLOR_VERMILION,
+            hover_color=COLOR_VERMILION_HOVER,
+            text_color=COLOR_IVORY,
+            height=28,
+            width=180,
+            command=self._exit_fullscreen_webcam,
+        )
+        exit_btn.pack(side="right", padx=16)
+
+        self.fullscreen_label = ctk.CTkLabel(
+            win,
+            text="Acquiring optical sensor stream...",
+            font=ctk.CTkFont(family=FONT_MONO, size=14),
+            text_color=COLOR_STONE,
+            fg_color="#000000",
+        )
+        self.fullscreen_label.pack(fill="both", expand=True, padx=8, pady=8)
+
+        win.bind("<Escape>", lambda e: self._exit_fullscreen_webcam())
+        win.bind("<q>", lambda e: self._exit_fullscreen_webcam())
+        win.protocol("WM_DELETE_WINDOW", self._exit_fullscreen_webcam)
+        win.focus_force()
+
+    def _exit_fullscreen_webcam(self):
+        if self.fullscreen_window:
+            try:
+                self.fullscreen_window.destroy()
+            except Exception:
+                pass
+            self.fullscreen_window = None
+            self.fullscreen_label = None
+        try:
+            self.focus_force()
+        except Exception:
+            pass
+
+    def _toggle_fullscreen_webcam(self):
+        if self.fullscreen_window and self.fullscreen_window.winfo_exists():
+            self._exit_fullscreen_webcam()
+        else:
+            self._open_fullscreen_webcam()
+
     def _close_app(self):
         self.running = False
+        self.task_cancel_event.set()
+        if self.fullscreen_window:
+            try:
+                self.fullscreen_window.destroy()
+            except Exception:
+                pass
+            self.fullscreen_window = None
         try:
             self.voice_controller.close()
         except (AttributeError, Exception):

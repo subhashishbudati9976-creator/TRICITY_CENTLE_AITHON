@@ -1,0 +1,3177 @@
+here is the prompt for the animation of AIRCONTROL the heading
+"## Integrate the <TechText /> component from React Bits
+
+You are helping integrate an open-source React component into an existing application.
+
+### Component: TechText
+### Variant: TypeScript + CSS
+
+
+---
+
+### Usage Example
+```jsx
+import TechText from './TechText';
+
+<div style={{ width: '100%', height: '480px', position: 'relative' }}>
+  <TechText
+    text="React Bits"
+    fontWeight={600}
+    fontSize={150}
+    reveal="letter"
+    dashLength={4}
+    dashGap={2}
+    specks={15}
+  />
+</div>
+```
+
+### Props
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| text | string | 'React Bits' | The wordmark to render. |
+| fontFamily | string | '' | Any font family loaded on the page. Leave empty to inherit the font of the container. |
+| fontWeight | number | 600 | Weight of the wordmark. |
+| fontSize | number | 150 | Largest font size in px. The wordmark shrinks to fit narrower containers. |
+| letterSpacing | number | -0.05 | Extra space between letters, in em. |
+| color | string | '#ffffff' | Colour of the letters and their outlines. |
+| accentColor | string | '#ffffff' | Colour of the selection frame, connector and labels. |
+| reveal | 'area' | 'letter' | 'off' | 'letter' | Area fades the letters into outlines inside a circle around the pointer. Letter turns only the active letter into its outline. Off keeps every letter solid. |
+| reach | number | 200 | Radius around the pointer where the letters turn into vector outlines, in px. |
+| softness | number | 0.7 | How gradually the fill hands over to the outlines. 0 is a hard edge. |
+| dashLength | number | 4 | Length of each outline dash, in px. |
+| dashGap | number | 2 | Space between outline dashes, in px. |
+| lineStyle | 'dashed' | 'solid' | 'dashed' | How the outlines under the pointer are drawn. Only the outer silhouette is traced either way. |
+| strokeWidth | number | 1.5 | Thickness of the outline, in px. |
+| specks | number | 15 | Tiny squares that blink and respawn around the active letter, seeded per letter. 0 turns them off. |
+| selection | boolean | true | Frame the letter under the pointer. The frame glides from letter to letter. |
+| labels | boolean | true | Label the frame with the letter and its size, or with its offset while dragged. |
+| draggable | boolean | true | Let letters be dragged off the baseline. They spring back home on release. |
+| sweep | boolean | true | Sweep the reveal across the wordmark on its own while the pointer is away. |
+| speed | number | 1 | Speed of the idle sweep. |
+| className | string | '' | Extra classes on the container. |
+| style | CSSProperties | - | Inline styles on the container. |
+
+### Full Component Source
+```tsx
+'use client';
+
+import { useEffect, useRef } from 'react';
+import type { CSSProperties } from 'react';
+
+import './TechText.css';
+
+type Box = { x1: number; y1: number; x2: number; y2: number };
+type Art = { image: HTMLCanvasElement; left: number; top: number };
+type Shape = { char: string; x: number; box: Box };
+type Glyph = Shape & {
+  offset: { x: number; y: number };
+  velocity: { x: number; y: number };
+  outline: number;
+  index: number;
+  fill: Art;
+  dashes: Art;
+};
+type Word = { size: number; baseline: number; left: number; right: number; top: number; bottom: number };
+
+export interface TechTextProps {
+  text?: string;
+  fontFamily?: string;
+  fontWeight?: number;
+  fontSize?: number;
+  letterSpacing?: number;
+  color?: string;
+  accentColor?: string;
+  reach?: number;
+  softness?: number;
+  dashLength?: number;
+  dashGap?: number;
+  strokeWidth?: number;
+  lineStyle?: 'dashed' | 'solid';
+  reveal?: 'area' | 'letter' | 'off';
+  specks?: number;
+  selection?: boolean;
+  labels?: boolean;
+  draggable?: boolean;
+  sweep?: boolean;
+  speed?: number;
+  className?: string;
+  style?: CSSProperties;
+}
+
+type Settings = Required<Omit<TechTextProps, 'className' | 'style'>>;
+
+const LABEL_FONT = '10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+const FALLOFF_STEPS = 8;
+const SPRING = 320;
+const DAMPING = 22;
+
+const approach = (current: number, target: number, dt: number, seconds: number) =>
+  current + (target - current) * (1 - Math.exp(-dt / seconds));
+
+const hexToRgb = (hex: string): [number, number, number] => {
+  let h = String(hex || '').replace('#', '');
+  if (h.length === 3) h = h.replace(/./g, c => c + c);
+  const n = parseInt(h.slice(0, 6), 16);
+  return Number.isNaN(n) ? [255, 255, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+
+const rgba = (hex: string, alpha: number) => {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const noise = (...values: number[]) => {
+  let h = 2166136261;
+  for (const value of values) {
+    h = Math.imul(h ^ (value | 0), 16777619);
+    h ^= h >>> 13;
+    h = Math.imul(h, 0x5bd1e995);
+    h ^= h >>> 15;
+  }
+  return (h >>> 0) / 4294967296;
+};
+
+const signed = (value: number) => (value > 0 ? `+${value}` : value < 0 ? `−${-value}` : '0');
+
+const TechText = ({
+  text = 'React Bits',
+  fontFamily = '',
+  fontWeight = 600,
+  fontSize = 150,
+  letterSpacing = -0.05,
+  color = '#ffffff',
+  accentColor = '#ffffff',
+  reach = 200,
+  softness = 0.7,
+  dashLength = 4,
+  dashGap = 2,
+  strokeWidth = 1.5,
+  lineStyle = 'dashed',
+  reveal = 'letter',
+  specks = 15,
+  selection = true,
+  labels = true,
+  draggable = true,
+  sweep = true,
+  speed = 1,
+  className = '',
+  style
+}: TechTextProps) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const settingsRef = useRef<Settings | null>(null);
+  const wakeRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    settingsRef.current = {
+      text,
+      fontFamily,
+      fontWeight,
+      fontSize,
+      letterSpacing,
+      color,
+      accentColor,
+      reach,
+      softness,
+      dashLength,
+      dashGap,
+      strokeWidth,
+      lineStyle,
+      reveal,
+      specks,
+      selection,
+      labels,
+      draggable,
+      sweep,
+      speed
+    };
+    wakeRef.current();
+  });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    const scratch = document.createElement('canvas');
+    const scratchCtx = scratch.getContext('2d');
+    if (!container || !canvas || !ctx || !scratchCtx) return undefined;
+
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let width = 1;
+    let height = 1;
+    let dpr = 1;
+    let raf = 0;
+    let last = performance.now();
+    let visible = true;
+    let alive = true;
+    let layoutKey = '';
+    let requestedFont = '';
+    let word: Word | null = null;
+    let glyphs: Glyph[] = [];
+    let presence = 0;
+    let clock = 0;
+    let pulse = 0;
+    let placed = false;
+    let dragging = -1;
+    const pointer = { x: 0, y: 0, inside: false };
+    const grab = { x: 0, y: 0 };
+    const lens = { x: 0, y: 0 };
+    const frame = { x1: 0, y1: 0, x2: 0, y2: 0, alpha: 0, index: -1 };
+
+    const refreshFonts = () => {
+      layoutKey = '';
+      wakeRef.current();
+    };
+
+    const family = (s: Settings) => s.fontFamily || getComputedStyle(container).fontFamily || 'sans-serif';
+    const fontFor = (s: Settings, size: number) => `${s.fontWeight} ${size}px ${family(s)}`;
+
+    const setFont = (target: CanvasRenderingContext2D, s: Settings, size: number) => {
+      target.font = fontFor(s, size);
+      if ('letterSpacing' in target) target.letterSpacing = `${s.letterSpacing * size}px`;
+      target.textAlign = 'left';
+      target.textBaseline = 'alphabetic';
+    };
+
+    const sprite = (s: Settings, view: Word, glyph: Shape, stroke: boolean): Art => {
+      const pad = Math.ceil(s.strokeWidth * 2 + 4);
+      const left = glyph.box.x1 - pad;
+      const top = glyph.box.y1 - pad;
+      const w = glyph.box.x2 - glyph.box.x1 + pad * 2;
+      const h = glyph.box.y2 - glyph.box.y1 + pad * 2;
+      const image = document.createElement('canvas');
+      image.width = Math.max(1, Math.ceil(w * dpr));
+      image.height = Math.max(1, Math.ceil(h * dpr));
+      const c = image.getContext('2d');
+      if (!c) return { image, left, top };
+      c.setTransform(dpr, 0, 0, dpr, -left * dpr, -top * dpr);
+      setFont(c, s, view.size);
+      if (stroke) {
+        c.lineJoin = 'round';
+        c.lineWidth = s.strokeWidth * 2;
+        c.lineCap = 'butt';
+        c.strokeStyle = s.color;
+        if (s.lineStyle !== 'solid') c.setLineDash([Math.max(1, s.dashLength), Math.max(1, s.dashGap)]);
+        c.strokeText(glyph.char, glyph.x, view.baseline);
+        c.setLineDash([]);
+        c.globalCompositeOperation = 'destination-out';
+        c.fillStyle = '#000000';
+        c.fillText(glyph.char, glyph.x, view.baseline);
+        c.globalCompositeOperation = 'source-over';
+      } else {
+        c.fillStyle = s.color;
+        c.fillText(glyph.char, glyph.x, view.baseline);
+      }
+      return { image, left, top };
+    };
+
+    const ensureLayout = (s: Settings): Word => {
+      const key = [
+        s.text,
+        family(s),
+        s.fontWeight,
+        s.fontSize,
+        s.letterSpacing,
+        s.color,
+        s.dashLength,
+        s.dashGap,
+        s.strokeWidth,
+        s.lineStyle,
+        width,
+        height,
+        dpr
+      ].join('|');
+      if (key === layoutKey && word) return word;
+      layoutKey = key;
+      const wanted = fontFor(s, 64);
+      if (document.fonts && wanted !== requestedFont) {
+        requestedFont = wanted;
+        document.fonts.load(wanted, s.text).then(refreshFonts, refreshFonts);
+      }
+
+      const probe = scratchCtx;
+      setFont(probe, s, s.fontSize);
+      let m = probe.measureText(s.text);
+      const fit = Math.min(
+        1,
+        (width * 0.9) / Math.max(m.actualBoundingBoxLeft + m.actualBoundingBoxRight, 1),
+        (height * 0.66) / Math.max(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent, 1)
+      );
+      const size = s.fontSize * fit;
+      setFont(probe, s, size);
+      m = probe.measureText(s.text);
+      const inkWidth = m.actualBoundingBoxLeft + m.actualBoundingBoxRight;
+      const inkHeight = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent;
+      const x = (width - inkWidth) / 2 + m.actualBoundingBoxLeft;
+      const baseline = (height - inkHeight) / 2 + m.actualBoundingBoxAscent;
+      const next = {
+        size,
+        baseline,
+        left: x - m.actualBoundingBoxLeft,
+        right: x + m.actualBoundingBoxRight,
+        top: baseline - m.actualBoundingBoxAscent,
+        bottom: baseline + m.actualBoundingBoxDescent
+      };
+      word = next;
+
+      const chars = Array.from(s.text);
+      const previous = glyphs;
+      glyphs = [];
+      let prefix = '';
+      chars.forEach((char, i) => {
+        prefix += char;
+        const own = probe.measureText(char);
+        const gx = x + probe.measureText(prefix).width - own.width;
+        if (!char.trim()) return;
+        const base = {
+          char,
+          x: gx,
+          box: {
+            x1: gx - own.actualBoundingBoxLeft,
+            y1: baseline - own.actualBoundingBoxAscent,
+            x2: gx + own.actualBoundingBoxRight,
+            y2: baseline + own.actualBoundingBoxDescent
+          }
+        };
+        const kept = previous[glyphs.length];
+        glyphs.push({
+          ...base,
+          offset: kept?.char === char ? kept.offset : { x: 0, y: 0 },
+          velocity: { x: 0, y: 0 },
+          outline: 0,
+          index: i,
+          fill: sprite(s, next, base, false),
+          dashes: sprite(s, next, base, true)
+        });
+      });
+      dragging = -1;
+      frame.index = -1;
+      return next;
+    };
+
+    const glyphAt = (x: number, y: number) => {
+      if (!word || y < word.top - 24 || y > word.bottom + 24) return -1;
+      let best = -1;
+      let bestDistance = Infinity;
+      glyphs.forEach((glyph, i) => {
+        const x1 = glyph.box.x1 + glyph.offset.x;
+        const x2 = glyph.box.x2 + glyph.offset.x;
+        const d = x < x1 ? x1 - x : x > x2 ? x - x2 : 0;
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = i;
+        }
+      });
+      return bestDistance < 28 ? best : -1;
+    };
+
+    const falloff = (
+      target: CanvasRenderingContext2D,
+      cx: number,
+      cy: number,
+      radius: number,
+      strength: number,
+      softness: number
+    ) => {
+      const inner = Math.min(1, Math.max(0, 1 - softness));
+      const gradient = target.createRadialGradient(cx, cy, 0, cx, cy, radius);
+      gradient.addColorStop(0, `rgba(0, 0, 0, ${strength})`);
+      if (inner > 0.995) {
+        gradient.addColorStop(0.995, `rgba(0, 0, 0, ${strength})`);
+        gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        return gradient;
+      }
+      for (let i = 0; i <= FALLOFF_STEPS; i++) {
+        const t = i / FALLOFF_STEPS;
+        const eased = t * t * (3 - 2 * t);
+        gradient.addColorStop(inner + (1 - inner) * t, `rgba(0, 0, 0, ${strength * (1 - eased)})`);
+      }
+      return gradient;
+    };
+
+    const blit = (
+      target: CanvasRenderingContext2D,
+      art: Art,
+      dx: number,
+      dy: number,
+      originX: number,
+      originY: number
+    ) => {
+      target.drawImage(
+        art.image,
+        Math.round((art.left + dx) * dpr - originX),
+        Math.round((art.top + dy) * dpr - originY)
+      );
+    };
+
+    const drawReveal = (s: Settings) => {
+      const radius = s.reach * dpr;
+      const cx = lens.x * dpr;
+      const cy = lens.y * dpr;
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.fillStyle = falloff(ctx, cx, cy, radius, presence, s.softness);
+      ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+      ctx.globalCompositeOperation = 'source-over';
+
+      const x0 = Math.max(0, Math.floor(cx - radius));
+      const y0 = Math.max(0, Math.floor(cy - radius));
+      const x1 = Math.min(canvas.width, Math.ceil(cx + radius));
+      const y1 = Math.min(canvas.height, Math.ceil(cy + radius));
+      if (x1 <= x0 || y1 <= y0) return;
+      const w = x1 - x0;
+      const h = y1 - y0;
+      if (scratch.width < w || scratch.height < h) {
+        scratch.width = Math.max(scratch.width, w);
+        scratch.height = Math.max(scratch.height, h);
+      }
+      scratchCtx.setTransform(1, 0, 0, 1, 0, 0);
+      scratchCtx.globalCompositeOperation = 'source-over';
+      scratchCtx.clearRect(0, 0, w, h);
+      for (const glyph of glyphs) blit(scratchCtx, glyph.dashes, glyph.offset.x, glyph.offset.y, x0, y0);
+      scratchCtx.globalCompositeOperation = 'destination-in';
+      scratchCtx.fillStyle = falloff(scratchCtx, cx - x0, cy - y0, radius, 1, s.softness);
+      scratchCtx.fillRect(0, 0, w, h);
+      scratchCtx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = presence;
+      ctx.drawImage(scratch, 0, 0, w, h, x0, y0, w, h);
+      ctx.globalAlpha = 1;
+    };
+
+    const crisp = (value: number) => (Math.round(value * dpr) + 0.5) / dpr;
+
+    const perimeterPoint = (distance: number, w: number, h: number): [number, number, number, number] => {
+      let d = ((distance % (2 * (w + h))) + 2 * (w + h)) % (2 * (w + h));
+      if (d < w) return [frame.x1 + d, frame.y1, 0, -1];
+      d -= w;
+      if (d < h) return [frame.x2, frame.y1 + d, 1, 0];
+      d -= h;
+      if (d < w) return [frame.x2 - d, frame.y2, 0, 1];
+      d -= w;
+      return [frame.x1, frame.y2 - d, -1, 0];
+    };
+
+    const drawSpecks = (s: Settings, a: number) => {
+      const w = frame.x2 - frame.x1;
+      const h = frame.y2 - frame.y1;
+      if (w < 2 || h < 2) return;
+      const perimeter = 2 * (w + h);
+      const seed = frame.index + 1;
+      const grid = 3;
+
+      for (let k = 0; k < s.specks; k++) {
+        const period = 0.5 + noise(seed, k, 11) * 1.2;
+        const t = pulse / period + noise(seed, k, 17);
+        const cycle = Math.floor(t);
+        const life = t - cycle;
+        if (life > 0.7) continue;
+        const [px, py, nx, ny] = perimeterPoint(noise(seed, k, cycle) * perimeter, w, h);
+        const pick = noise(seed, k, cycle, 2);
+        const size = pick < 0.46 ? 2 : pick < 0.7 ? 3 : pick < 0.84 ? 5 : pick < 0.94 ? 8 : 11;
+        const large = size >= 8;
+        const out = (large ? 9 : 4) + Math.floor(noise(seed, k, cycle, 1) * 5) * grid;
+        const x = frame.x1 + Math.round((px + nx * out - frame.x1) / grid) * grid;
+        const y = frame.y1 + Math.round((py + ny * out - frame.y1) / grid) * grid;
+        const tone = noise(seed, k, cycle, 3);
+        const blink = life < 0.06 || (life > 0.32 && life < 0.36) ? 0.35 : 1;
+        const alpha = a * (large ? 0.3 + 0.4 * tone : 0.3 + 0.6 * tone) * blink;
+        const left = Math.round(x - size / 2);
+        const top = Math.round(y - size / 2);
+        if (tone < 0.26 || (large && tone < 0.78)) {
+          ctx.strokeStyle = rgba(s.accentColor, alpha);
+          ctx.strokeRect(left + 0.5, top + 0.5, size, size);
+          if (large && tone > 0.5) {
+            ctx.fillStyle = rgba(s.accentColor, alpha);
+            ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 2, 2);
+          }
+        } else {
+          ctx.fillStyle = rgba(s.accentColor, alpha);
+          ctx.fillRect(left, top, size, size);
+        }
+      }
+
+      for (let j = 0; j < 2; j++) {
+        const head = (pulse * 0.42 * s.speed + j * 0.5) * perimeter;
+        for (let i = 0; i < 4; i++) {
+          const [x, y] = perimeterPoint(head - i * 6, w, h);
+          const size = i === 0 ? 3 : 2;
+          ctx.fillStyle = rgba(s.accentColor, a * [0.95, 0.55, 0.32, 0.16][i]);
+          ctx.fillRect(Math.round(x - size / 2), Math.round(y - size / 2), size, size);
+        }
+      }
+    };
+
+    const drawFrame = (s: Settings) => {
+      const glyph = glyphs[frame.index];
+      if (!glyph || frame.alpha < 0.01) return;
+      const a = frame.alpha;
+      const x1 = crisp(frame.x1);
+      const y1 = crisp(frame.y1);
+      const x2 = crisp(frame.x2);
+      const y2 = crisp(frame.y2);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const moved = Math.hypot(glyph.offset.x, glyph.offset.y);
+      if (moved > 1) {
+        const hx = (glyph.box.x1 + glyph.box.x2) / 2;
+        const hy = (glyph.box.y1 + glyph.box.y2) / 2;
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        ctx.lineTo(hx + glyph.offset.x, hy + glyph.offset.y);
+        ctx.setLineDash([3, 4]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = rgba(s.accentColor, 0.45 * a);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.rect(Math.round(hx) - 2, Math.round(hy) - 2, 4, 4);
+        ctx.fillStyle = rgba(s.accentColor, 0.7 * a);
+        ctx.fill();
+      }
+
+      ctx.beginPath();
+      ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(s.accentColor, 0.5 * a);
+      ctx.stroke();
+
+      ctx.beginPath();
+      for (const [cx, cy] of [
+        [x1, y1],
+        [x2, y1],
+        [x2, y2],
+        [x1, y2]
+      ]) {
+        ctx.rect(Math.round(cx) - 2, Math.round(cy) - 2, 5, 5);
+      }
+      ctx.fillStyle = rgba(s.accentColor, 0.95 * a);
+      ctx.fill();
+
+      if (s.specks > 0) {
+        ctx.lineWidth = 1;
+        drawSpecks(s, a);
+      }
+
+      if (!s.labels) return;
+      ctx.font = LABEL_FONT;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = rgba(s.accentColor, 0.62 * a);
+      const label =
+        moved > 1
+          ? `${signed(Math.round(glyph.offset.x))}, ${signed(Math.round(-glyph.offset.y))}`
+          : `${glyph.char}  ${Math.round(glyph.box.x2 - glyph.box.x1)} × ${Math.round(glyph.box.y2 - glyph.box.y1)}`;
+      ctx.fillText(label, Math.round(frame.x1), Math.round(frame.y1) - 7);
+    };
+
+    const tick = (now: number) => {
+      raf = 0;
+      const s = settingsRef.current;
+      if (!s) return;
+      const dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000));
+      last = now;
+      const view = ensureLayout(s);
+
+      const sweeping = s.sweep && !reducedMotion && !pointer.inside && dragging < 0;
+      if (sweeping) clock += dt * s.speed;
+      pulse += dt;
+      let targetX = pointer.x;
+      let targetY = pointer.y;
+      if (sweeping) {
+        targetX = view.left + (view.right - view.left) * (0.5 - 0.5 * Math.cos(clock * 0.45));
+        targetY = view.top + (view.bottom - view.top) * (0.45 + 0.1 * Math.sin(clock * 0.8));
+      }
+      const active = pointer.inside || sweeping || dragging >= 0;
+      if (active && !placed) {
+        lens.x = targetX;
+        lens.y = targetY;
+      }
+      if (active) {
+        const lag = pointer.inside ? 0.05 : 0.22;
+        lens.x = approach(lens.x, targetX, dt, lag);
+        lens.y = approach(lens.y, targetY, dt, lag);
+      }
+      placed = active;
+      presence = approach(presence, s.reveal === 'area' && active && dragging < 0 ? 1 : 0, dt, 0.16);
+
+      let moving = false;
+      glyphs.forEach((glyph, i) => {
+        if (i === dragging) {
+          glyph.offset.x = approach(glyph.offset.x, pointer.x - grab.x, dt, 0.03);
+          glyph.offset.y = approach(glyph.offset.y, pointer.y - grab.y, dt, 0.03);
+          glyph.velocity.x = 0;
+          glyph.velocity.y = 0;
+          moving = true;
+          return;
+        }
+        const { offset, velocity } = glyph;
+        if (Math.abs(offset.x) < 0.05 && Math.abs(offset.y) < 0.05 && Math.hypot(velocity.x, velocity.y) < 0.5) {
+          offset.x = 0;
+          offset.y = 0;
+          velocity.x = 0;
+          velocity.y = 0;
+          return;
+        }
+        velocity.x += (-SPRING * offset.x - DAMPING * velocity.x) * dt;
+        velocity.y += (-SPRING * offset.y - DAMPING * velocity.y) * dt;
+        offset.x += velocity.x * dt;
+        offset.y += velocity.y * dt;
+        moving = true;
+      });
+
+      const focus = dragging >= 0 ? dragging : active ? glyphAt(lens.x, lens.y) : -1;
+      if (focus >= 0 && s.selection) {
+        const glyph = glyphs[focus];
+        const bx1 = glyph.box.x1 + glyph.offset.x - 6;
+        const by1 = glyph.box.y1 + glyph.offset.y - 6;
+        const bx2 = glyph.box.x2 + glyph.offset.x + 6;
+        const by2 = glyph.box.y2 + glyph.offset.y + 6;
+        if (frame.index < 0 || frame.alpha < 0.02) {
+          frame.x1 = bx1;
+          frame.y1 = by1;
+          frame.x2 = bx2;
+          frame.y2 = by2;
+        }
+        const glide = focus === dragging ? 0.02 : 0.08;
+        frame.x1 = approach(frame.x1, bx1, dt, glide);
+        frame.y1 = approach(frame.y1, by1, dt, glide);
+        frame.x2 = approach(frame.x2, bx2, dt, glide);
+        frame.y2 = approach(frame.y2, by2, dt, glide);
+        frame.index = focus;
+      }
+      frame.alpha = approach(frame.alpha, focus >= 0 && s.selection ? 1 : 0, dt, 0.1);
+
+      glyphs.forEach((glyph, i) => {
+        const target = s.reveal === 'letter' && i === focus && i !== dragging ? 1 : 0;
+        glyph.outline = approach(glyph.outline, target, dt, 0.09);
+        if (Math.abs(glyph.outline - target) > 0.002) moving = true;
+        else glyph.outline = target;
+      });
+
+      if (s.draggable) container.style.cursor = dragging >= 0 ? 'grabbing' : focus >= 0 && pointer.inside ? 'grab' : '';
+
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const glyph of glyphs) {
+        const moved = Math.hypot(glyph.offset.x, glyph.offset.y);
+        if (moved > 1) {
+          ctx.globalAlpha = Math.min(1, moved / 24) * 0.55;
+          blit(ctx, glyph.dashes, 0, 0, 0, 0);
+          ctx.globalAlpha = 1;
+        }
+      }
+      for (const glyph of glyphs) {
+        if (glyph.outline < 0.999) {
+          ctx.globalAlpha = 1 - glyph.outline;
+          blit(ctx, glyph.fill, glyph.offset.x, glyph.offset.y, 0, 0);
+        }
+        if (glyph.outline > 0.001) {
+          ctx.globalAlpha = glyph.outline;
+          blit(ctx, glyph.dashes, glyph.offset.x, glyph.offset.y, 0, 0);
+        }
+        ctx.globalAlpha = 1;
+      }
+      if (presence > 0.001) drawReveal(s);
+      drawFrame(s);
+
+      const settling =
+        moving ||
+        Math.abs(presence - (s.reveal === 'area' && active && dragging < 0 ? 1 : 0)) > 0.002 ||
+        (frame.alpha > 0.01 && frame.alpha < 0.99);
+      if ((active || settling) && visible && alive) raf = requestAnimationFrame(tick);
+    };
+
+    const wake = () => {
+      if (raf || !visible || !alive) return;
+      last = performance.now();
+      raf = requestAnimationFrame(tick);
+    };
+    wakeRef.current = wake;
+
+    const resize = () => {
+      width = Math.max(1, container.clientWidth);
+      height = Math.max(1, container.clientHeight);
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      layoutKey = '';
+      wake();
+    };
+
+    const locate = (e: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      pointer.x = e.clientX - rect.left;
+      pointer.y = e.clientY - rect.top;
+    };
+    const onMove = (e: PointerEvent) => {
+      locate(e);
+      pointer.inside = true;
+      wake();
+    };
+    const onLeave = () => {
+      if (dragging >= 0) return;
+      pointer.inside = false;
+      wake();
+    };
+    const onDown = (e: PointerEvent) => {
+      locate(e);
+      pointer.inside = true;
+      const s = settingsRef.current;
+      if (s?.draggable && (e.pointerType !== 'mouse' || e.button === 0)) {
+        const index = glyphAt(pointer.x, pointer.y);
+        if (index >= 0) {
+          dragging = index;
+          grab.x = pointer.x - glyphs[index].offset.x;
+          grab.y = pointer.y - glyphs[index].offset.y;
+          container.setPointerCapture?.(e.pointerId);
+        }
+      }
+      wake();
+    };
+    const onUp = (e: PointerEvent) => {
+      if (dragging >= 0) {
+        dragging = -1;
+        container.releasePointerCapture?.(e.pointerId);
+        const rect = container.getBoundingClientRect();
+        pointer.inside =
+          e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+      }
+      wake();
+    };
+
+    container.addEventListener('pointermove', onMove, { passive: true });
+    container.addEventListener('pointerenter', onMove, { passive: true });
+    container.addEventListener('pointerdown', onDown, { passive: true });
+    container.addEventListener('pointerup', onUp, { passive: true });
+    container.addEventListener('pointercancel', onUp, { passive: true });
+    container.addEventListener('pointerleave', onLeave, { passive: true });
+
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(container);
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      wake();
+    });
+    intersectionObserver.observe(container);
+    if (document.fonts) document.fonts.ready.then(refreshFonts, refreshFonts);
+
+    resize();
+
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      wakeRef.current = () => {};
+      resizeObserver.disconnect();
+      intersectionObserver.disconnect();
+      container.removeEventListener('pointermove', onMove);
+      container.removeEventListener('pointerenter', onMove);
+      container.removeEventListener('pointerdown', onDown);
+      container.removeEventListener('pointerup', onUp);
+      container.removeEventListener('pointercancel', onUp);
+      container.removeEventListener('pointerleave', onLeave);
+    };
+  }, []);
+
+  return (
+    <div ref={containerRef} className={`tech-text ${className}`.trim()} style={style} role="img" aria-label={text}>
+      <canvas ref={canvasRef} className="tech-text-canvas" />
+    </div>
+  );
+};
+
+export default TechText;
+
+```
+
+### Component CSS
+```css
+.tech-text {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.tech-text-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+```
+
+### Integration Instructions
+1. Install any listed dependencies.
+2. Copy the component source into the appropriate directory in the project.
+3. Import the CSS file alongside the component.
+4. Import and render the component using the usage example above as a starting point.
+5. Adjust props as needed for the specific use case — refer to the props table for all available options.
+
+### More from React Bits
+The full library index, including everything reactbits.dev offers, is at https://reactbits.dev/llms.txt — fetch it if this component is not the right fit or the project needs more pieces."
+and the rest all text
+and the rest of the text animationn prompt
+"## Integrate the <BlurText /> component from React Bits
+
+You are helping integrate an open-source React component into an existing application.
+
+### Component: BlurText
+### Variant: TypeScript + CSS
+### Dependencies: motion
+
+---
+
+### Usage Example
+```jsx
+import BlurText from "./BlurText";
+
+const handleAnimationComplete = () => {
+  console.log('Animation completed!');
+};
+
+<BlurText
+  text="Isn't this so cool?!"
+  delay={150}
+  animateBy="words"
+  direction="top"
+  onAnimationComplete={handleAnimationComplete}
+  className="text-2xl mb-8"
+/>
+```
+
+### Props
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| text | string | "" | The text content to animate. |
+| animateBy | string | "words" | Determines whether to animate by 'words' or 'letters'. |
+| direction | string | "top" | Direction from which the words/letters appear ('top' or 'bottom'). |
+| delay | number | 200 | Delay between animations for each word/letter (in ms). |
+| stepDuration | number | 0.35 | The time taken for each letter/word to animate (in seconds). |
+| threshold | number | 0.1 | Intersection threshold for triggering the animation. |
+| rootMargin | string | "0px" | Root margin for the intersection observer. |
+| onAnimationComplete | function | undefined | Callback function triggered when all animations complete. |
+
+### Full Component Source
+```tsx
+'use client';
+
+import { motion, type Transition } from 'motion/react';
+import { useEffect, useRef, useState, useMemo } from 'react';
+
+type BlurTextProps = {
+  text?: string;
+  delay?: number;
+  className?: string;
+  animateBy?: 'words' | 'letters';
+  direction?: 'top' | 'bottom';
+  threshold?: number;
+  rootMargin?: string;
+  animationFrom?: Record<string, string | number>;
+  animationTo?: Array<Record<string, string | number>>;
+  easing?: (t: number) => number;
+  onAnimationComplete?: () => void;
+  stepDuration?: number;
+};
+
+const buildKeyframes = (
+  from: Record<string, string | number>,
+  steps: Array<Record<string, string | number>>
+): Record<string, Array<string | number>> => {
+  const keys = new Set<string>([...Object.keys(from), ...steps.flatMap(s => Object.keys(s))]);
+
+  const keyframes: Record<string, Array<string | number>> = {};
+  keys.forEach(k => {
+    keyframes[k] = [from[k], ...steps.map(s => s[k])];
+  });
+  return keyframes;
+};
+
+const BlurText: React.FC<BlurTextProps> = ({
+  text = '',
+  delay = 200,
+  className = '',
+  animateBy = 'words',
+  direction = 'top',
+  threshold = 0.1,
+  rootMargin = '0px',
+  animationFrom,
+  animationTo,
+  easing = (t: number) => t,
+  onAnimationComplete,
+  stepDuration = 0.35
+}) => {
+  const elements = animateBy === 'words' ? text.split(' ') : text.split('');
+  const [inView, setInView] = useState(false);
+  const ref = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInView(true);
+          observer.unobserve(ref.current as Element);
+        }
+      },
+      { threshold, rootMargin }
+    );
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [threshold, rootMargin]);
+
+  const defaultFrom = useMemo(
+    () =>
+      direction === 'top' ? { filter: 'blur(10px)', opacity: 0, y: -50 } : { filter: 'blur(10px)', opacity: 0, y: 50 },
+    [direction]
+  );
+
+  const defaultTo = useMemo(
+    () => [
+      {
+        filter: 'blur(5px)',
+        opacity: 0.5,
+        y: direction === 'top' ? 5 : -5
+      },
+      { filter: 'blur(0px)', opacity: 1, y: 0 }
+    ],
+    [direction]
+  );
+
+  const fromSnapshot = animationFrom ?? defaultFrom;
+  const toSnapshots = animationTo ?? defaultTo;
+
+  const stepCount = toSnapshots.length + 1;
+  const totalDuration = stepDuration * (stepCount - 1);
+  const times = Array.from({ length: stepCount }, (_, i) => (stepCount === 1 ? 0 : i / (stepCount - 1)));
+
+  return (
+    <p ref={ref} className={className} style={{ display: 'flex', flexWrap: 'wrap' }}>
+      {elements.map((segment, index) => {
+        const animateKeyframes = buildKeyframes(fromSnapshot, toSnapshots);
+
+        const spanTransition: Transition = {
+          duration: totalDuration,
+          times,
+          delay: (index * delay) / 1000,
+          ease: easing
+        };
+
+        return (
+          <motion.span
+            key={index}
+            initial={fromSnapshot}
+            animate={inView ? animateKeyframes : fromSnapshot}
+            transition={spanTransition}
+            onAnimationComplete={index === elements.length - 1 ? onAnimationComplete : undefined}
+            style={{
+              display: 'inline-block',
+              willChange: 'transform, filter, opacity'
+            }}
+          >
+            {segment === ' ' ? '\u00A0' : segment}
+            {animateBy === 'words' && index < elements.length - 1 && '\u00A0'}
+          </motion.span>
+        );
+      })}
+    </p>
+  );
+};
+
+export default BlurText;
+
+```
+
+### Integration Instructions
+1. Install any listed dependencies.
+2. Copy the component source into the appropriate directory in the project.
+3. Import and render the component using the usage example above as a starting point.
+4. Adjust props as needed for the specific use case — refer to the props table for all available options.
+
+### More from React Bits
+The full library index, including everything reactbits.dev offers, is at https://reactbits.dev/llms.txt — fetch it if this component is not the right fit or the project needs more pieces.
+"
+prompt ot antigravity
+And cursor trailing use this prompt
+"## Integrate the <GlowCursor /> component from React Bits
+
+You are helping integrate an open-source React component into an existing application.
+
+### Component: GlowCursor
+### Variant: TypeScript + CSS
+
+
+---
+
+### Usage Example
+```jsx
+import GlowCursor from './GlowCursor';
+
+<div style={{ position: 'relative', width: '100%', height: '500px' }}>
+  <GlowCursor
+    color="#5f8bff"
+    intensity={1.3}
+    trailWidth={3}
+    linger={1.4}
+    glow={1.2}
+    clickBurst
+    theme="dark"
+  >
+    {/* Your content here */}
+  </GlowCursor>
+</div>
+```
+
+### Props
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| color | string | '#5f8bff' | Color of the light where it is freshly drawn. |
+| secondaryColor | string | - | Color the light cools to as it drifts. Leave it out for a deeper shade of the main color. |
+| intensity | number | 1.3 | Brightness of the light. |
+| trailWidth | number | 3 | Thickness of the light where it is drawn, in pixels. |
+| linger | number | 1.4 | Seconds the light stays visible before it fades. |
+| glow | number | 1.2 | Strength of the soft glow around the light. |
+| hotspot | number | 0.8 | Strength of the white-hot core near the cursor. |
+| followSpeed | number | 0.6 | How tightly the light follows the cursor, from 0 to 1. |
+| grain | number | 0 | Amount of film grain in the light. |
+| clickBurst | boolean | true | Releases a burst of light when you click. |
+| quality | 'low' | 'medium' | 'high' | 'high' | Resolution of the simulation. Lower it for weaker devices. |
+| theme | 'dark' | 'light' | 'dark' | Use light on light backgrounds for an ink-like look. |
+| blendMode | string | auto | CSS blend mode of the canvas. Defaults to screen in dark and normal in light. |
+| maxDevicePixelRatio | number | 2 | Maximum pixel density of the canvas. |
+| enabled | boolean | true | Stops drawing new light while keeping what is already there. |
+| children | ReactNode | - | Content rendered above the light. |
+| className | string | '' | Extra class names for the container. |
+| style | CSSProperties | - | Inline styles for the container. |
+
+### Full Component Source
+```tsx
+'use client';
+
+import { useEffect, useRef, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
+
+import './GlowCursor.css';
+
+export interface GlowCursorProps extends Omit<HTMLAttributes<HTMLDivElement>, 'color'> {
+  color?: string;
+  secondaryColor?: string;
+  intensity?: number;
+  trailWidth?: number;
+  linger?: number;
+  glow?: number;
+  hotspot?: number;
+  followSpeed?: number;
+  grain?: number;
+  clickBurst?: boolean;
+  quality?: 'low' | 'medium' | 'high';
+  theme?: 'dark' | 'light';
+  blendMode?: CSSProperties['mixBlendMode'];
+  maxDevicePixelRatio?: number;
+  enabled?: boolean;
+  children?: ReactNode;
+}
+
+type Quality = 'low' | 'medium' | 'high';
+
+type Settings = {
+  color: string;
+  secondaryColor: string;
+  intensity: number;
+  trailWidth: number;
+  linger: number;
+  glow: number;
+  hotspot: number;
+  followSpeed: number;
+  grain: number;
+  clickBurst: boolean;
+  quality: Quality;
+  theme: 'dark' | 'light';
+  maxDevicePixelRatio: number;
+  enabled: boolean;
+};
+
+type Target = {
+  texture: WebGLTexture;
+  fbo: WebGLFramebuffer;
+  width: number;
+  height: number;
+  texel: [number, number];
+};
+
+type Pair = {
+  readonly read: Target;
+  readonly write: Target;
+  swap: () => void;
+  targets: () => Target[];
+};
+
+type Targets = {
+  velocity: Pair;
+  dye: Pair;
+  forward: Target;
+  back: Target;
+  pressure: Pair;
+  divergence: Target;
+  bloom: Target[];
+};
+
+type Pass = {
+  program: WebGLProgram;
+  uniforms: Record<string, WebGLUniformLocation | null>;
+};
+
+const VERTEX = `#version 300 es
+in vec2 aPosition;
+uniform vec2 uTexel;
+out vec2 vUv;
+out vec2 vL;
+out vec2 vR;
+out vec2 vT;
+out vec2 vB;
+void main() {
+  vUv = aPosition * 0.5 + 0.5;
+  vL = vUv - vec2(uTexel.x, 0.0);
+  vR = vUv + vec2(uTexel.x, 0.0);
+  vT = vUv + vec2(0.0, uTexel.y);
+  vB = vUv - vec2(0.0, uTexel.y);
+  gl_Position = vec4(aPosition, 0.0, 1.0);
+}`;
+
+const HEADER = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+in vec2 vUv;
+in vec2 vL;
+in vec2 vR;
+in vec2 vT;
+in vec2 vB;
+out vec4 outColor;
+`;
+
+const SPLAT = `${HEADER}
+uniform sampler2D uTarget;
+uniform float uAspect;
+uniform vec2 uA;
+uniform vec2 uB;
+uniform float uRadius;
+uniform float uWide;
+uniform vec3 uValue;
+uniform float uMode;
+uniform float uStrength;
+float erf(float x) {
+  float x2 = x * x;
+  float a = 0.147;
+  return sign(x) * sqrt(1.0 - exp(-x2 * (1.2732395 + a * x2) / (1.0 + a * x2)));
+}
+float sweep(float along, float length, float across, float radius) {
+  return exp(-across * across / (radius * radius)) * 0.5 * (erf(along / radius) - erf((along - length) / radius));
+}
+void main() {
+  vec2 p = vec2(vUv.x * uAspect, vUv.y);
+  vec2 a = vec2(uA.x * uAspect, uA.y);
+  vec2 ab = vec2(uB.x * uAspect, uB.y) - a;
+  float len = length(ab);
+  vec2 dir = len > 1e-6 ? ab / len : vec2(1.0, 0.0);
+  vec2 ap = p - a;
+  vec3 base = texture(uTarget, vUv).xyz;
+  if (uMode > 1.5) {
+    float along = dot(ap, dir);
+    float across = dot(ap, vec2(-dir.y, dir.x));
+    if (uMode > 2.5) {
+      outColor = vec4(mix(base, uValue, sweep(along, len, across, uRadius) * uStrength), 1.0);
+      return;
+    }
+    vec3 add = vec3(uValue.xy * sweep(along, len, across, uRadius), uValue.z * sweep(along, len, across, uWide));
+    outColor = vec4(base + add, 1.0);
+    return;
+  }
+  float h = clamp(dot(ap, ab) / max(dot(ab, ab), 1e-9), 0.0, 1.0);
+  vec2 d = ap - ab * h;
+  float r2 = dot(d, d);
+  float falloff = exp(-r2 / (uRadius * uRadius));
+  float wide = exp(-r2 / (uWide * uWide));
+  vec3 result = uMode > 0.5 ? mix(base, uValue, falloff * uStrength) : base + vec3(uValue.xy * falloff, uValue.z * wide);
+  outColor = vec4(result, 1.0);
+}`;
+
+const ADVECT = `${HEADER}
+uniform sampler2D uVelocity;
+uniform sampler2D uSource;
+uniform vec2 uVelocityTexel;
+uniform float uDt;
+uniform vec4 uDecay;
+void main() {
+  vec2 coord = vUv - uDt * texture(uVelocity, vUv).xy * uVelocityTexel;
+  outColor = texture(uSource, coord) * uDecay;
+}`;
+
+const MACCORMACK = `${HEADER}
+uniform sampler2D uVelocity;
+uniform sampler2D uSource;
+uniform sampler2D uForward;
+uniform sampler2D uBack;
+uniform vec2 uVelocityTexel;
+uniform vec2 uSourceTexel;
+uniform float uDt;
+uniform vec4 uDecay;
+void main() {
+  vec2 coord = vUv - uDt * texture(uVelocity, vUv).xy * uVelocityTexel;
+  vec4 forward = texture(uForward, vUv);
+  vec4 corrected = forward + 0.5 * (texture(uSource, vUv) - texture(uBack, vUv));
+  vec2 base = (floor(coord / uSourceTexel - 0.5) + 0.5) * uSourceTexel;
+  vec4 a = texture(uSource, base);
+  vec4 b = texture(uSource, base + vec2(uSourceTexel.x, 0.0));
+  vec4 c = texture(uSource, base + vec2(0.0, uSourceTexel.y));
+  vec4 d = texture(uSource, base + uSourceTexel);
+  vec4 low = min(min(a, b), min(c, d));
+  vec4 high = max(max(a, b), max(c, d));
+  outColor = clamp(corrected, low, high) * uDecay;
+}`;
+
+const DIVERGENCE = `${HEADER}
+uniform sampler2D uVelocity;
+void main() {
+  float left = texture(uVelocity, vL).x;
+  float right = texture(uVelocity, vR).x;
+  float top = texture(uVelocity, vT).y;
+  float bottom = texture(uVelocity, vB).y;
+  vec2 center = texture(uVelocity, vUv).xy;
+  if (vL.x < 0.0) left = -center.x;
+  if (vR.x > 1.0) right = -center.x;
+  if (vT.y > 1.0) top = -center.y;
+  if (vB.y < 0.0) bottom = -center.y;
+  outColor = vec4(0.5 * (right - left + top - bottom), 0.0, 0.0, 1.0);
+}`;
+
+const SCALE = `${HEADER}
+uniform sampler2D uSource;
+uniform float uValue;
+void main() {
+  outColor = texture(uSource, vUv) * uValue;
+}`;
+
+const PRESSURE = `${HEADER}
+uniform sampler2D uPressure;
+uniform sampler2D uDivergence;
+void main() {
+  float left = texture(uPressure, vL).x;
+  float right = texture(uPressure, vR).x;
+  float top = texture(uPressure, vT).x;
+  float bottom = texture(uPressure, vB).x;
+  float divergence = texture(uDivergence, vUv).x;
+  outColor = vec4((left + right + bottom + top - divergence) * 0.25, 0.0, 0.0, 1.0);
+}`;
+
+const GRADIENT = `${HEADER}
+uniform sampler2D uPressure;
+uniform sampler2D uVelocity;
+void main() {
+  float left = texture(uPressure, vL).x;
+  float right = texture(uPressure, vR).x;
+  float top = texture(uPressure, vT).x;
+  float bottom = texture(uPressure, vB).x;
+  vec2 velocity = texture(uVelocity, vUv).xy - vec2(right - left, top - bottom);
+  outColor = vec4(velocity, 0.0, 1.0);
+}`;
+
+const SHADE = `
+uniform vec3 uColor;
+uniform vec3 uSecondary;
+uniform float uIntensity;
+uniform float uHotspot;
+vec3 shade(vec3 dye) {
+  float energy = max(dye.x, 0.0);
+  float heat = clamp(dye.y, 0.0, energy);
+  float gas = max(dye.z, 0.0);
+  float fresh = heat / max(energy, 0.0001);
+  vec3 tint = mix(uSecondary, uColor, fresh);
+  return (tint * energy + uSecondary * gas + vec3(heat * heat * 0.3 * uHotspot)) * uIntensity;
+}
+`;
+
+const PREFILTER = `${HEADER}${SHADE}
+uniform sampler2D uDye;
+uniform vec2 uDyeTexel;
+void main() {
+  vec2 o = uDyeTexel * 0.5;
+  vec3 light = shade(texture(uDye, vUv + vec2(-o.x, -o.y)).xyz);
+  light += shade(texture(uDye, vUv + vec2(o.x, -o.y)).xyz);
+  light += shade(texture(uDye, vUv + vec2(-o.x, o.y)).xyz);
+  light += shade(texture(uDye, vUv + vec2(o.x, o.y)).xyz);
+  outColor = vec4(light * 0.25, 1.0);
+}`;
+
+const DOWN = `${HEADER}
+uniform sampler2D uSource;
+uniform vec2 uSourceTexel;
+void main() {
+  vec2 o = uSourceTexel;
+  vec3 color = texture(uSource, vUv).rgb * 4.0;
+  color += texture(uSource, vUv + vec2(-o.x, -o.y)).rgb;
+  color += texture(uSource, vUv + vec2(o.x, -o.y)).rgb;
+  color += texture(uSource, vUv + vec2(-o.x, o.y)).rgb;
+  color += texture(uSource, vUv + vec2(o.x, o.y)).rgb;
+  outColor = vec4(color / 8.0, 1.0);
+}`;
+
+const UP = `${HEADER}
+uniform sampler2D uSource;
+uniform vec2 uSourceTexel;
+void main() {
+  vec2 o = uSourceTexel;
+  vec3 color = texture(uSource, vUv + vec2(-o.x * 2.0, 0.0)).rgb;
+  color += texture(uSource, vUv + vec2(o.x * 2.0, 0.0)).rgb;
+  color += texture(uSource, vUv + vec2(0.0, -o.y * 2.0)).rgb;
+  color += texture(uSource, vUv + vec2(0.0, o.y * 2.0)).rgb;
+  color += texture(uSource, vUv + vec2(-o.x, -o.y)).rgb * 2.0;
+  color += texture(uSource, vUv + vec2(o.x, -o.y)).rgb * 2.0;
+  color += texture(uSource, vUv + vec2(-o.x, o.y)).rgb * 2.0;
+  color += texture(uSource, vUv + vec2(o.x, o.y)).rgb * 2.0;
+  outColor = vec4(color / 12.0, 1.0);
+}`;
+
+const DISPLAY = `${HEADER}${SHADE}
+uniform sampler2D uDye;
+uniform sampler2D uBloom;
+uniform float uGlow;
+uniform float uGrain;
+uniform float uTime;
+uniform float uLight;
+float hash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+void main() {
+  vec3 dye = texture(uDye, vUv).xyz;
+  vec3 light = shade(dye);
+  vec3 bloom = texture(uBloom, vUv).rgb * uGlow;
+  float edge = smoothstep(0.0, 0.02, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y)));
+  float grain = 1.0 + (hash(gl_FragCoord.xy + fract(uTime * 13.7) * 97.0) - 0.5) * uGrain * 2.0;
+  if (uLight > 0.5) {
+    float energy = max(dye.x, 0.0);
+    float heat = clamp(dye.y, 0.0, energy);
+    float gas = max(dye.z, 0.0);
+    float fresh = heat / max(energy, 0.0001);
+    vec3 tint = mix(uSecondary, uColor, fresh);
+    float halo = dot(bloom, vec3(0.2126, 0.7152, 0.0722));
+    float density = 1.0 - exp(-((energy * 1.1 + gas * 0.8) * uIntensity + halo * 0.25));
+    float tone = dot(tint, vec3(0.2126, 0.7152, 0.0722));
+    vec3 ink = tint * min(1.0, 0.5 / max(tone, 0.001)) * mix(0.95, 0.72, smoothstep(0.5, 3.0, energy));
+    ink = mix(ink, vec3(1.0), clamp(heat * heat * 0.05 * uHotspot, 0.0, 0.45));
+    density = clamp(density * grain, 0.0, 1.0) * edge;
+    outColor = vec4(ink * density, density);
+  } else {
+    vec3 color = 1.0 - exp(-(light + bloom) * grain);
+    color *= edge;
+    outColor = vec4(color, max(color.r, max(color.g, color.b)));
+  }
+}`;
+
+const QUALITY: Record<Quality, { sim: number; dye: number }> = {
+  low: { sim: 96, dye: 384 },
+  medium: { sim: 128, dye: 576 },
+  high: { sim: 160, dye: 768 }
+};
+
+const PRESSURE_STEPS = 20;
+const FLOW = 0.75;
+const BLOOM_LEVELS = 5;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const compile = (gl: WebGL2RenderingContext, type: number, source: string) => {
+  const shader = gl.createShader(type);
+  if (!shader) return null;
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
+  gl.deleteShader(shader);
+  return null;
+};
+
+const toHsv = ([r, g, b]: number[]): [number, number, number] => {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let hue = 0;
+  if (delta > 0) {
+    if (max === r) hue = ((g - b) / delta) % 6;
+    else if (max === g) hue = (b - r) / delta + 2;
+    else hue = (r - g) / delta + 4;
+  }
+  return [(hue * 60 + 360) % 360, max > 0 ? delta / max : 0, max];
+};
+
+const fromHsv = (hue: number, saturation: number, value: number): number[] => {
+  const h = (((hue % 360) + 360) % 360) / 60;
+  const c = value * saturation;
+  const x = c * (1 - Math.abs((h % 2) - 1));
+  const m = value - c;
+  const [r, g, b] =
+    h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
+  return [r + m, g + m, b + m];
+};
+
+const GlowCursor = ({
+  color = '#5f8bff',
+  secondaryColor,
+  intensity = 1.3,
+  trailWidth = 3,
+  linger = 1.4,
+  glow = 1.2,
+  hotspot = 0.8,
+  followSpeed = 0.6,
+  grain = 0,
+  clickBurst = true,
+  quality = 'high',
+  theme = 'dark',
+  blendMode,
+  maxDevicePixelRatio = 2,
+  enabled = true,
+  children,
+  className = '',
+  style,
+  ...rest
+}: GlowCursorProps) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const settingsRef = useRef<Settings>(null as unknown as Settings);
+  settingsRef.current = {
+    color: String(color),
+    secondaryColor: secondaryColor ? String(secondaryColor) : '',
+    intensity: Math.max(0, intensity),
+    trailWidth: clamp(trailWidth, 0.5, 40),
+    linger: clamp(linger, 0.1, 10),
+    glow: Math.max(0, glow),
+    hotspot: Math.max(0, hotspot),
+    followSpeed: clamp(followSpeed, 0, 1),
+    grain: Math.max(0, grain),
+    clickBurst,
+    quality: (QUALITY as Record<string, unknown>)[quality] ? quality : 'high',
+    theme,
+    maxDevicePixelRatio,
+    enabled
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const canvas = canvasRef.current;
+    const gl = canvas?.getContext('webgl2', {
+      alpha: true,
+      premultipliedAlpha: true,
+      antialias: false,
+      depth: false,
+      stencil: false
+    });
+    if (!container || !canvas || !gl || !gl.getExtension('EXT_color_buffer_float')) return undefined;
+
+    const vertexShader = compile(gl, gl.VERTEX_SHADER, VERTEX);
+    if (!vertexShader) return undefined;
+
+    const build = (source: string): Pass | null => {
+      const fragment = compile(gl, gl.FRAGMENT_SHADER, source);
+      const program = gl.createProgram();
+      if (!fragment || !program) return null;
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragment);
+      gl.bindAttribLocation(program, 0, 'aPosition');
+      gl.linkProgram(program);
+      gl.deleteShader(fragment);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        gl.deleteProgram(program);
+        return null;
+      }
+      const uniforms: Record<string, WebGLUniformLocation | null> = {};
+      const count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < count; i++) {
+        const info = gl.getActiveUniform(program, i);
+        if (info) uniforms[info.name] = gl.getUniformLocation(program, info.name);
+      }
+      return { program, uniforms };
+    };
+
+    const passes = {
+      splat: build(SPLAT),
+      advect: build(ADVECT),
+      maccormack: build(MACCORMACK),
+      divergence: build(DIVERGENCE),
+      scale: build(SCALE),
+      pressure: build(PRESSURE),
+      gradient: build(GRADIENT),
+      prefilter: build(PREFILTER),
+      down: build(DOWN),
+      up: build(UP),
+      display: build(DISPLAY)
+    };
+    if (Object.values(passes).some(pass => !pass)) return undefined;
+    const pass = passes as Record<keyof typeof passes, Pass>;
+
+    const vao = gl.createVertexArray();
+    const buffer = gl.createBuffer();
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    const probe = document.createElement('canvas');
+    probe.width = 1;
+    probe.height = 1;
+    const probeContext = probe.getContext('2d', { willReadFrequently: true });
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+    const state = {
+      width: 1,
+      height: 1,
+      ratio: 1,
+      colorKey: '',
+      color: [0.37, 0.55, 1] as number[],
+      secondary: [0.25, 0.3, 1] as number[],
+      pointer: { x: 0, y: 0, inside: false },
+      emitter: { x: 0, y: 0, vx: 0, vy: 0, px: 0, py: 0, travelled: 0 },
+      ready: false,
+      bursts: [] as [number, number][],
+      active: -Infinity,
+      time: 0,
+      allocated: '',
+      targets: null as Targets | null
+    };
+    let raf = 0;
+    let last = 0;
+    let alive = true;
+    let visible = true;
+
+    const toRgb = (value: string, fallback: number[]): number[] => {
+      if (!probeContext || !value) return fallback;
+      const css = /^[0-9a-f]{3,8}$/i.test(value) ? `#${value}` : value;
+      probeContext.clearRect(0, 0, 1, 1);
+      probeContext.fillStyle = '#000000';
+      probeContext.fillStyle = css;
+      probeContext.fillRect(0, 0, 1, 1);
+      const [r, g, b] = probeContext.getImageData(0, 0, 1, 1).data;
+      return [r / 255, g / 255, b / 255];
+    };
+
+    const resolveColors = (s: Settings) => {
+      const key = `${s.color}|${s.secondaryColor}`;
+      if (key === state.colorKey) return;
+      state.colorKey = key;
+      state.color = toRgb(s.color, [0.37, 0.55, 1]);
+      if (s.secondaryColor) {
+        state.secondary = toRgb(s.secondaryColor, state.color);
+      } else {
+        const [hue, saturation, value] = toHsv(state.color);
+        state.secondary = fromHsv(hue + 8, Math.min(1, saturation * 1.1 + 0.05), value);
+      }
+    };
+
+    const createTarget = (
+      width: number,
+      height: number,
+      internalFormat: number,
+      format: number,
+      filter: number
+    ): Target => {
+      const texture = gl.createTexture() as WebGLTexture;
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, gl.HALF_FLOAT, null);
+      const fbo = gl.createFramebuffer() as WebGLFramebuffer;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+      gl.viewport(0, 0, width, height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return { texture, fbo, width, height, texel: [1 / width, 1 / height] };
+    };
+
+    const createPair = (
+      width: number,
+      height: number,
+      internalFormat: number,
+      format: number,
+      filter: number
+    ): Pair => {
+      let read = createTarget(width, height, internalFormat, format, filter);
+      let write = createTarget(width, height, internalFormat, format, filter);
+      return {
+        get read() {
+          return read;
+        },
+        get write() {
+          return write;
+        },
+        swap() {
+          const next = read;
+          read = write;
+          write = next;
+        },
+        targets() {
+          return [read, write];
+        }
+      };
+    };
+
+    const destroyTarget = (target: Target) => {
+      gl.deleteTexture(target.texture);
+      gl.deleteFramebuffer(target.fbo);
+    };
+
+    const release = () => {
+      const t = state.targets;
+      if (!t) return;
+      [
+        ...t.velocity.targets(),
+        ...t.dye.targets(),
+        ...t.pressure.targets(),
+        t.divergence,
+        t.forward,
+        t.back,
+        ...t.bloom
+      ].forEach(destroyTarget);
+      state.targets = null;
+    };
+
+    const clearTargets = () => {
+      const t = state.targets;
+      if (!t) return;
+      gl.clearColor(0, 0, 0, 0);
+      [...t.velocity.targets(), ...t.dye.targets(), ...t.pressure.targets()].forEach(target => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      });
+    };
+
+    const allocate = () => {
+      const s = settingsRef.current;
+      const key = `${s.quality}|${state.width}|${state.height}|${canvas.width}|${canvas.height}`;
+      if (key === state.allocated && state.targets) return;
+      release();
+      state.allocated = key;
+      const preset = QUALITY[s.quality];
+      const aspect = state.width / state.height;
+      const dims = (base: number) =>
+        aspect >= 1 ? [Math.round(base * aspect), base] : [base, Math.round(base / aspect)];
+      const [simW, simH] = dims(preset.sim);
+      let [dyeW, dyeH] = dims(preset.dye);
+      const shrink = Math.min(1, canvas.width / dyeW, canvas.height / dyeH);
+      dyeW = Math.max(2, Math.round(dyeW * shrink));
+      dyeH = Math.max(2, Math.round(dyeH * shrink));
+      const bloom = [];
+      let bloomW = dyeW >> 1;
+      let bloomH = dyeH >> 1;
+      for (let i = 0; i < BLOOM_LEVELS; i++) {
+        bloom.push(createTarget(Math.max(1, bloomW), Math.max(1, bloomH), gl.RGBA16F, gl.RGBA, gl.LINEAR));
+        bloomW >>= 1;
+        bloomH >>= 1;
+      }
+      state.targets = {
+        velocity: createPair(simW, simH, gl.RG16F, gl.RG, gl.LINEAR),
+        dye: createPair(dyeW, dyeH, gl.RGBA16F, gl.RGBA, gl.LINEAR),
+        forward: createTarget(dyeW, dyeH, gl.RGBA16F, gl.RGBA, gl.LINEAR),
+        back: createTarget(dyeW, dyeH, gl.RGBA16F, gl.RGBA, gl.LINEAR),
+        pressure: createPair(simW, simH, gl.R16F, gl.RED, gl.NEAREST),
+        divergence: createTarget(simW, simH, gl.R16F, gl.RED, gl.NEAREST),
+        bloom
+      };
+    };
+
+    const resize = () => {
+      const s = settingsRef.current;
+      const width = Math.max(1, container.clientWidth);
+      const height = Math.max(1, container.clientHeight);
+      const ratio = Math.min(window.devicePixelRatio || 1, Math.max(0.5, s.maxDevicePixelRatio || 2));
+      const pixelWidth = Math.max(1, Math.round(width * ratio));
+      const pixelHeight = Math.max(1, Math.round(height * ratio));
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
+      state.width = width;
+      state.height = height;
+      state.ratio = ratio;
+      allocate();
+    };
+
+    const draw = (target: Target | null) => {
+      if (target) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+        gl.viewport(0, 0, target.width, target.height);
+      } else {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    };
+
+    const use = (pass: Pass, texel: number[]) => {
+      gl.useProgram(pass.program);
+      if (pass.uniforms.uTexel) gl.uniform2f(pass.uniforms.uTexel, texel[0], texel[1]);
+      return pass.uniforms;
+    };
+
+    const bind = (unit: number, target: Target) => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, target.texture);
+      return unit;
+    };
+
+    const splat = (
+      pair: Pair,
+      ax: number,
+      ay: number,
+      bx: number,
+      by: number,
+      radius: number,
+      value: number[],
+      mode: number,
+      strength: number,
+      wide = radius
+    ) => {
+      const u = use(pass.splat, pair.read.texel);
+      gl.uniform1i(u.uTarget, bind(0, pair.read));
+      gl.uniform1f(u.uAspect, state.width / state.height);
+      gl.uniform2f(u.uA, ax / state.width, 1 - ay / state.height);
+      gl.uniform2f(u.uB, bx / state.width, 1 - by / state.height);
+      gl.uniform1f(u.uRadius, radius / state.height);
+      gl.uniform1f(u.uWide, wide / state.height);
+      gl.uniform3f(u.uValue, value[0], value[1], value[2]);
+      gl.uniform1f(u.uMode, mode);
+      gl.uniform1f(u.uStrength, strength);
+      draw(pair.write);
+      pair.swap();
+    };
+
+    const toGrid = (vx: number, vy: number) => {
+      const { velocity } = state.targets as Targets;
+      return [(vx * velocity.read.width) / state.width, (-vy * velocity.read.height) / state.height];
+    };
+
+    const lightRadius = (s: Settings) =>
+      Math.max(s.trailWidth * 0.5, (state.height / (state.targets as Targets).dye.read.height) * 0.9);
+
+    const emit = (s: Settings, dt: number, now: number) => {
+      const { emitter, pointer } = state;
+      const { velocity, dye } = state.targets as Targets;
+      emitter.px = emitter.x;
+      emitter.py = emitter.y;
+      if (reduce || s.followSpeed >= 1) {
+        emitter.x = pointer.x;
+        emitter.y = pointer.y;
+      } else {
+        const omega = 10 + s.followSpeed * 50;
+        const steps = Math.max(1, Math.ceil(dt / 0.004));
+        const h = dt / steps;
+        for (let k = 0; k < steps; k++) {
+          emitter.vx += (omega * omega * (pointer.x - emitter.x) - 2 * omega * emitter.vx) * h;
+          emitter.vy += (omega * omega * (pointer.y - emitter.y) - 2 * omega * emitter.vy) * h;
+          emitter.x += emitter.vx * h;
+          emitter.y += emitter.vy * h;
+        }
+      }
+      const dx = emitter.x - emitter.px;
+      const dy = emitter.y - emitter.py;
+      const length = Math.hypot(dx, dy);
+      if (length < 0.05 || !s.enabled) return;
+      const radius = lightRadius(s);
+      if (!reduce) {
+        const target = toGrid(dx / Math.max(dt, 1e-3), dy / Math.max(dt, 1e-3));
+        splat(
+          velocity,
+          emitter.px,
+          emitter.py,
+          emitter.x,
+          emitter.y,
+          radius * 4 + 18,
+          [target[0], target[1], 0],
+          3,
+          FLOW * 0.6
+        );
+      }
+      splat(dye, emitter.px, emitter.py, emitter.x, emitter.y, radius, [5.6, 5.6, 0.7], 2, 1, radius * 5 + 6);
+      state.active = now;
+    };
+
+    const burst = (s: Settings, x: number, y: number, now: number) => {
+      const { velocity, dye } = state.targets as Targets;
+      const radius = lightRadius(s);
+      const jets = 6;
+      const base = Math.random() * Math.PI * 2;
+      for (let k = 0; k < jets; k++) {
+        const angle = base + (k / jets) * Math.PI * 2 + (Math.random() - 0.5) * 0.5;
+        const cx = Math.cos(angle);
+        const cy = Math.sin(angle);
+        const reach = 20 + Math.random() * 14;
+        const ax = x + cx * 3;
+        const ay = y + cy * 3;
+        const bx = x + cx * reach;
+        const by = y + cy * reach;
+        if (!reduce) {
+          const target = toGrid(Math.cos(angle + 0.6) * 760, Math.sin(angle + 0.6) * 760);
+          splat(velocity, ax, ay, bx, by, 18, [target[0], target[1], 0], 1, 0.9);
+        }
+        splat(dye, ax, ay, bx, by, radius * 1.1, [2.4, 2.4, 0.3], 0, 1, radius * 5 + 6);
+      }
+      splat(dye, x, y, x + 0.01, y, radius * 2.2, [1.8, 1.8, 0.4], 0, 1, radius * 7 + 10);
+      state.active = now;
+    };
+
+    const step = (s: Settings, dt: number) => {
+      const { velocity, dye, pressure, divergence } = state.targets as Targets;
+      if (!reduce) {
+        let u = use(pass.divergence, velocity.read.texel);
+        gl.uniform1i(u.uVelocity, bind(0, velocity.read));
+        draw(divergence);
+
+        u = use(pass.scale, pressure.read.texel);
+        gl.uniform1i(u.uSource, bind(0, pressure.read));
+        gl.uniform1f(u.uValue, 0.8);
+        draw(pressure.write);
+        pressure.swap();
+
+        u = use(pass.pressure, pressure.read.texel);
+        gl.uniform1i(u.uDivergence, bind(1, divergence));
+        for (let i = 0; i < PRESSURE_STEPS; i++) {
+          gl.uniform1i(u.uPressure, bind(0, pressure.read));
+          draw(pressure.write);
+          pressure.swap();
+        }
+
+        u = use(pass.gradient, velocity.read.texel);
+        gl.uniform1i(u.uPressure, bind(0, pressure.read));
+        gl.uniform1i(u.uVelocity, bind(1, velocity.read));
+        draw(velocity.write);
+        velocity.swap();
+
+        u = use(pass.advect, velocity.read.texel);
+        gl.uniform2f(u.uVelocityTexel, velocity.read.texel[0], velocity.read.texel[1]);
+        gl.uniform1i(u.uVelocity, bind(0, velocity.read));
+        gl.uniform1i(u.uSource, bind(0, velocity.read));
+        gl.uniform1f(u.uDt, dt);
+        const calm = Math.exp(-dt * 1.2);
+        gl.uniform4f(u.uDecay, calm, calm, 1, 1);
+        draw(velocity.write);
+        velocity.swap();
+      }
+
+      const decay = [
+        Math.exp((-dt * 4.6) / (s.linger * 0.8)),
+        Math.exp((-dt * 4.6) / (s.linger * 0.2)),
+        Math.exp((-dt * 4.6) / (s.linger * 1.2)),
+        1
+      ];
+      const { forward, back } = state.targets as Targets;
+      if (reduce) {
+        const u = use(pass.advect, dye.read.texel);
+        gl.uniform2f(u.uVelocityTexel, velocity.read.texel[0], velocity.read.texel[1]);
+        gl.uniform1i(u.uVelocity, bind(0, velocity.read));
+        gl.uniform1i(u.uSource, bind(1, dye.read));
+        gl.uniform1f(u.uDt, 0);
+        gl.uniform4f(u.uDecay, decay[0], decay[1], decay[2], decay[3]);
+        draw(dye.write);
+        dye.swap();
+        return;
+      }
+      let u = use(pass.advect, dye.read.texel);
+      gl.uniform2f(u.uVelocityTexel, velocity.read.texel[0], velocity.read.texel[1]);
+      gl.uniform1i(u.uVelocity, bind(0, velocity.read));
+      gl.uniform1i(u.uSource, bind(1, dye.read));
+      gl.uniform1f(u.uDt, dt);
+      gl.uniform4f(u.uDecay, 1, 1, 1, 1);
+      draw(forward);
+      gl.uniform1i(u.uSource, bind(1, forward));
+      gl.uniform1f(u.uDt, -dt);
+      draw(back);
+      u = use(pass.maccormack, dye.read.texel);
+      gl.uniform2f(u.uVelocityTexel, velocity.read.texel[0], velocity.read.texel[1]);
+      gl.uniform2f(u.uSourceTexel, dye.read.texel[0], dye.read.texel[1]);
+      gl.uniform1i(u.uVelocity, bind(0, velocity.read));
+      gl.uniform1i(u.uSource, bind(1, dye.read));
+      gl.uniform1i(u.uForward, bind(2, forward));
+      gl.uniform1i(u.uBack, bind(3, back));
+      gl.uniform1f(u.uDt, dt);
+      gl.uniform4f(u.uDecay, decay[0], decay[1], decay[2], decay[3]);
+      draw(dye.write);
+      dye.swap();
+    };
+
+    const setShade = (u: Record<string, WebGLUniformLocation | null>, s: Settings) => {
+      gl.uniform3f(u.uColor, state.color[0], state.color[1], state.color[2]);
+      gl.uniform3f(u.uSecondary, state.secondary[0], state.secondary[1], state.secondary[2]);
+      gl.uniform1f(u.uIntensity, s.intensity);
+      gl.uniform1f(u.uHotspot, s.hotspot);
+    };
+
+    const render = (s: Settings) => {
+      const { dye, bloom } = state.targets as Targets;
+      if (s.glow > 0) {
+        let u = use(pass.prefilter, bloom[0].texel);
+        gl.uniform1i(u.uDye, bind(0, dye.read));
+        gl.uniform2f(u.uDyeTexel, dye.read.texel[0], dye.read.texel[1]);
+        setShade(u, s);
+        draw(bloom[0]);
+        u = use(pass.down, bloom[0].texel);
+        for (let i = 1; i < bloom.length; i++) {
+          gl.uniform1i(u.uSource, bind(0, bloom[i - 1]));
+          gl.uniform2f(u.uSourceTexel, bloom[i - 1].texel[0], bloom[i - 1].texel[1]);
+          draw(bloom[i]);
+        }
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.ONE);
+        u = use(pass.up, bloom[0].texel);
+        for (let i = bloom.length - 1; i > 0; i--) {
+          gl.uniform1i(u.uSource, bind(0, bloom[i]));
+          gl.uniform2f(u.uSourceTexel, bloom[i].texel[0], bloom[i].texel[1]);
+          draw(bloom[i - 1]);
+        }
+        gl.disable(gl.BLEND);
+      }
+      const u = use(pass.display, [1 / canvas.width, 1 / canvas.height]);
+      gl.uniform1i(u.uDye, bind(0, dye.read));
+      gl.uniform1i(u.uBloom, bind(1, bloom[0]));
+      setShade(u, s);
+      gl.uniform1f(u.uGlow, s.glow > 0 ? (s.glow * 1.4) / BLOOM_LEVELS : 0);
+      gl.uniform1f(u.uGrain, s.grain);
+      gl.uniform1f(u.uTime, state.time);
+      gl.uniform1f(u.uLight, s.theme === 'light' ? 1 : 0);
+      draw(null);
+    };
+
+    const blank = () => {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    };
+
+    const frame = (now: number) => {
+      raf = 0;
+      if (!alive || !visible || document.hidden) return;
+      const s = settingsRef.current;
+      const dt = last ? Math.min(1 / 30, (now - last) / 1000) : 1 / 60;
+      last = now;
+      state.time += dt;
+      const wanted = Math.min(window.devicePixelRatio || 1, Math.max(0.5, s.maxDevicePixelRatio || 2));
+      if (Math.abs(wanted - state.ratio) > 0.01) resize();
+      allocate();
+      resolveColors(s);
+      gl.bindVertexArray(vao);
+      gl.disable(gl.BLEND);
+
+      if (state.ready) emit(s, dt, now);
+      while (state.bursts.length) {
+        const [x, y] = state.bursts.shift() as [number, number];
+        burst(s, x, y, now);
+      }
+      step(s, dt);
+      render(s);
+
+      const quiet = now - state.active > s.linger * 1200 + 900;
+      const resting = Math.hypot(state.emitter.vx, state.emitter.vy) < 1;
+      if (quiet && resting) {
+        clearTargets();
+        blank();
+        last = 0;
+        return;
+      }
+      raf = requestAnimationFrame(frame);
+    };
+
+    const wake = () => {
+      if (!raf && alive && visible && !document.hidden) raf = requestAnimationFrame(frame);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const inside = x >= 0 && y >= 0 && x <= rect.width && y <= rect.height;
+      if (!inside) {
+        if (state.pointer.inside) {
+          state.pointer.inside = false;
+          state.ready = false;
+          wake();
+        }
+        return;
+      }
+      if (!state.ready) {
+        state.emitter.x = x;
+        state.emitter.y = y;
+        state.emitter.px = x;
+        state.emitter.py = y;
+        state.emitter.vx = 0;
+        state.emitter.vy = 0;
+        state.ready = true;
+      }
+      state.pointer.x = x;
+      state.pointer.y = y;
+      state.pointer.inside = true;
+      wake();
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      const s = settingsRef.current;
+      if (!s.clickBurst || !s.enabled) return;
+      const rect = container.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (x < 0 || y < 0 || x > rect.width || y > rect.height) return;
+      state.bursts.push([x, y]);
+      wake();
+    };
+
+    const onPointerLeave = () => {
+      state.pointer.inside = false;
+      state.ready = false;
+      wake();
+    };
+
+    const onVisibility = () => {
+      last = 0;
+      wake();
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      resize();
+      wake();
+    });
+    resizeObserver.observe(container);
+    const intersection = new IntersectionObserver(entries => {
+      visible = entries.some(entry => entry.isIntersecting);
+      if (visible) {
+        last = 0;
+        wake();
+      }
+    });
+    intersection.observe(container);
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    document.documentElement.addEventListener('pointerleave', onPointerLeave);
+    document.addEventListener('visibilitychange', onVisibility);
+    resize();
+    blank();
+
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      resizeObserver.disconnect();
+      intersection.disconnect();
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerdown', onPointerDown);
+      document.documentElement.removeEventListener('pointerleave', onPointerLeave);
+      document.removeEventListener('visibilitychange', onVisibility);
+      release();
+      Object.values(pass).forEach(item => gl.deleteProgram(item.program));
+      gl.deleteShader(vertexShader);
+      gl.deleteBuffer(buffer);
+      gl.deleteVertexArray(vao);
+    };
+  }, []);
+
+  const mode = blendMode ?? (theme === 'light' ? 'normal' : 'screen');
+
+  return (
+    <div ref={containerRef} className={`glow-cursor${className ? ` ${className}` : ''}`} style={style} {...rest}>
+      <canvas ref={canvasRef} className="glow-cursor__canvas" style={{ mixBlendMode: mode }} aria-hidden="true" />
+      {children && <div className="glow-cursor__content">{children}</div>}
+    </div>
+  );
+};
+
+export default GlowCursor;
+
+```
+
+### Component CSS
+```css
+.glow-cursor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.glow-cursor__canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.glow-cursor__content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+
+```
+
+### Integration Instructions
+1. Install any listed dependencies.
+2. Copy the component source into the appropriate directory in the project.
+3. Import the CSS file alongside the component.
+4. Import and render the component using the usage example above as a starting point.
+5. Adjust props as needed for the specific use case — refer to the props table for all available options.
+
+### More from React Bits
+The full library index, including everything reactbits.dev offers, is at https://reactbits.dev/llms.txt — fetch it if this component is not the right fit or the project needs more pieces.
+"
+Magic bentoo card hover animation
+"## Integrate the <MagicBento /> component from React Bits
+
+You are helping integrate an open-source React component into an existing application.
+
+### Component: MagicBento
+### Variant: TypeScript + CSS
+### Dependencies: gsap
+
+---
+
+### Usage Example
+```jsx
+import MagicBento from './MagicBento'
+
+<MagicBento 
+  textAutoHide={true}
+  enableStars={true}
+  enableSpotlight={true}
+  enableBorderGlow={true}
+  enableTilt={true}
+  enableMagnetism={true}
+  clickEffect={true}
+  spotlightRadius={300}
+  particleCount={12}
+  glowColor="132, 0, 255"
+/>
+```
+
+### Props
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| textAutoHide | boolean | true | Whether text content should auto-hide on hover |
+| enableStars | boolean | true | Enable particle star animation effect |
+| enableSpotlight | boolean | true | Enable spotlight cursor following effect |
+| enableBorderGlow | boolean | true | Enable border glow effect that follows cursor |
+| disableAnimations | boolean | false | Disable all animations (automatically enabled on mobile) |
+| spotlightRadius | number | 300 | Radius of the spotlight effect in pixels |
+| particleCount | number | 12 | Number of particles in the star animation |
+| enableTilt | boolean | false | Enable 3D tilt effect on card hover |
+| glowColor | string | "132, 0, 255" | RGB color values for glow effects (without rgba wrapper) |
+| clickEffect | boolean | true | Enable ripple effect on card click |
+| enableMagnetism | boolean | true | Enable subtle card attraction to cursor |
+
+### Full Component Source
+```tsx
+'use client';
+
+import React, { useRef, useEffect, useCallback, useState } from 'react';
+import { gsap } from 'gsap';
+import './MagicBento.css';
+
+export interface BentoCardProps {
+  color?: string;
+  title?: string;
+  description?: string;
+  label?: string;
+  textAutoHide?: boolean;
+  disableAnimations?: boolean;
+}
+
+export interface BentoProps {
+  textAutoHide?: boolean;
+  enableStars?: boolean;
+  enableSpotlight?: boolean;
+  enableBorderGlow?: boolean;
+  disableAnimations?: boolean;
+  spotlightRadius?: number;
+  particleCount?: number;
+  enableTilt?: boolean;
+  glowColor?: string;
+  clickEffect?: boolean;
+  enableMagnetism?: boolean;
+}
+
+const DEFAULT_PARTICLE_COUNT = 12;
+const DEFAULT_SPOTLIGHT_RADIUS = 300;
+const DEFAULT_GLOW_COLOR = '132, 0, 255';
+const MOBILE_BREAKPOINT = 768;
+
+const cardData: BentoCardProps[] = [
+  {
+    color: '#120F17',
+    title: 'Analytics',
+    description: 'Track user behavior',
+    label: 'Insights'
+  },
+  {
+    color: '#120F17',
+    title: 'Dashboard',
+    description: 'Centralized data view',
+    label: 'Overview'
+  },
+  {
+    color: '#120F17',
+    title: 'Collaboration',
+    description: 'Work together seamlessly',
+    label: 'Teamwork'
+  },
+  {
+    color: '#120F17',
+    title: 'Automation',
+    description: 'Streamline workflows',
+    label: 'Efficiency'
+  },
+  {
+    color: '#120F17',
+    title: 'Integration',
+    description: 'Connect favorite tools',
+    label: 'Connectivity'
+  },
+  {
+    color: '#120F17',
+    title: 'Security',
+    description: 'Enterprise-grade protection',
+    label: 'Protection'
+  }
+];
+
+const createParticleElement = (x: number, y: number, color: string = DEFAULT_GLOW_COLOR): HTMLDivElement => {
+  const el = document.createElement('div');
+  el.className = 'particle';
+  el.style.cssText = `
+    position: absolute;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgba(${color}, 1);
+    box-shadow: 0 0 6px rgba(${color}, 0.6);
+    pointer-events: none;
+    z-index: 100;
+    left: ${x}px;
+    top: ${y}px;
+  `;
+  return el;
+};
+
+const calculateSpotlightValues = (radius: number) => ({
+  proximity: radius * 0.5,
+  fadeDistance: radius * 0.75
+});
+
+const updateCardGlowProperties = (card: HTMLElement, mouseX: number, mouseY: number, glow: number, radius: number) => {
+  const rect = card.getBoundingClientRect();
+  const relativeX = ((mouseX - rect.left) / rect.width) * 100;
+  const relativeY = ((mouseY - rect.top) / rect.height) * 100;
+
+  card.style.setProperty('--glow-x', `${relativeX}%`);
+  card.style.setProperty('--glow-y', `${relativeY}%`);
+  card.style.setProperty('--glow-intensity', glow.toString());
+  card.style.setProperty('--glow-radius', `${radius}px`);
+};
+
+const ParticleCard: React.FC<{
+  children: React.ReactNode;
+  className?: string;
+  disableAnimations?: boolean;
+  style?: React.CSSProperties;
+  particleCount?: number;
+  glowColor?: string;
+  enableTilt?: boolean;
+  clickEffect?: boolean;
+  enableMagnetism?: boolean;
+}> = ({
+  children,
+  className = '',
+  disableAnimations = false,
+  style,
+  particleCount = DEFAULT_PARTICLE_COUNT,
+  glowColor = DEFAULT_GLOW_COLOR,
+  enableTilt = true,
+  clickEffect = false,
+  enableMagnetism = false
+}) => {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const particlesRef = useRef<HTMLDivElement[]>([]);
+  const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const isHoveredRef = useRef(false);
+  const memoizedParticles = useRef<HTMLDivElement[]>([]);
+  const particlesInitialized = useRef(false);
+  const magnetismAnimationRef = useRef<gsap.core.Tween | null>(null);
+
+  const initializeParticles = useCallback(() => {
+    if (particlesInitialized.current || !cardRef.current) return;
+
+    const { width, height } = cardRef.current.getBoundingClientRect();
+    memoizedParticles.current = Array.from({ length: particleCount }, () =>
+      createParticleElement(Math.random() * width, Math.random() * height, glowColor)
+    );
+    particlesInitialized.current = true;
+  }, [particleCount, glowColor]);
+
+  const clearAllParticles = useCallback(() => {
+    timeoutsRef.current.forEach(clearTimeout);
+    timeoutsRef.current = [];
+    magnetismAnimationRef.current?.kill();
+
+    particlesRef.current.forEach(particle => {
+      gsap.to(particle, {
+        scale: 0,
+        opacity: 0,
+        duration: 0.3,
+        ease: 'back.in(1.7)',
+        onComplete: () => {
+          particle.parentNode?.removeChild(particle);
+        }
+      });
+    });
+    particlesRef.current = [];
+  }, []);
+
+  const animateParticles = useCallback(() => {
+    if (!cardRef.current || !isHoveredRef.current) return;
+
+    if (!particlesInitialized.current) {
+      initializeParticles();
+    }
+
+    memoizedParticles.current.forEach((particle, index) => {
+      const timeoutId = setTimeout(() => {
+        if (!isHoveredRef.current || !cardRef.current) return;
+
+        const clone = particle.cloneNode(true) as HTMLDivElement;
+        cardRef.current.appendChild(clone);
+        particlesRef.current.push(clone);
+
+        gsap.fromTo(clone, { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.3, ease: 'back.out(1.7)' });
+
+        gsap.to(clone, {
+          x: (Math.random() - 0.5) * 100,
+          y: (Math.random() - 0.5) * 100,
+          rotation: Math.random() * 360,
+          duration: 2 + Math.random() * 2,
+          ease: 'none',
+          repeat: -1,
+          yoyo: true
+        });
+
+        gsap.to(clone, {
+          opacity: 0.3,
+          duration: 1.5,
+          ease: 'power2.inOut',
+          repeat: -1,
+          yoyo: true
+        });
+      }, index * 100);
+
+      timeoutsRef.current.push(timeoutId);
+    });
+  }, [initializeParticles]);
+
+  useEffect(() => {
+    if (disableAnimations || !cardRef.current) return;
+
+    const element = cardRef.current;
+
+    const handleMouseEnter = () => {
+      isHoveredRef.current = true;
+      animateParticles();
+
+      if (enableTilt) {
+        gsap.to(element, {
+          rotateX: 5,
+          rotateY: 5,
+          duration: 0.3,
+          ease: 'power2.out',
+          transformPerspective: 1000
+        });
+      }
+    };
+
+    const handleMouseLeave = () => {
+      isHoveredRef.current = false;
+      clearAllParticles();
+
+      if (enableTilt) {
+        gsap.to(element, {
+          rotateX: 0,
+          rotateY: 0,
+          duration: 0.3,
+          ease: 'power2.out'
+        });
+      }
+
+      if (enableMagnetism) {
+        gsap.to(element, {
+          x: 0,
+          y: 0,
+          duration: 0.3,
+          ease: 'power2.out'
+        });
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!enableTilt && !enableMagnetism) return;
+
+      const rect = element.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      if (enableTilt) {
+        const rotateX = ((y - centerY) / centerY) * -10;
+        const rotateY = ((x - centerX) / centerX) * 10;
+
+        gsap.to(element, {
+          rotateX,
+          rotateY,
+          duration: 0.1,
+          ease: 'power2.out',
+          transformPerspective: 1000
+        });
+      }
+
+      if (enableMagnetism) {
+        const magnetX = (x - centerX) * 0.05;
+        const magnetY = (y - centerY) * 0.05;
+
+        magnetismAnimationRef.current = gsap.to(element, {
+          x: magnetX,
+          y: magnetY,
+          duration: 0.3,
+          ease: 'power2.out'
+        });
+      }
+    };
+
+    const handleClick = (e: MouseEvent) => {
+      if (!clickEffect) return;
+
+      const rect = element.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const maxDistance = Math.max(
+        Math.hypot(x, y),
+        Math.hypot(x - rect.width, y),
+        Math.hypot(x, y - rect.height),
+        Math.hypot(x - rect.width, y - rect.height)
+      );
+
+      const ripple = document.createElement('div');
+      ripple.style.cssText = `
+        position: absolute;
+        width: ${maxDistance * 2}px;
+        height: ${maxDistance * 2}px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(${glowColor}, 0.4) 0%, rgba(${glowColor}, 0.2) 30%, transparent 70%);
+        left: ${x - maxDistance}px;
+        top: ${y - maxDistance}px;
+        pointer-events: none;
+        z-index: 1000;
+      `;
+
+      element.appendChild(ripple);
+
+      gsap.fromTo(
+        ripple,
+        {
+          scale: 0,
+          opacity: 1
+        },
+        {
+          scale: 1,
+          opacity: 0,
+          duration: 0.8,
+          ease: 'power2.out',
+          onComplete: () => ripple.remove()
+        }
+      );
+    };
+
+    element.addEventListener('mouseenter', handleMouseEnter);
+    element.addEventListener('mouseleave', handleMouseLeave);
+    element.addEventListener('mousemove', handleMouseMove);
+    element.addEventListener('click', handleClick);
+
+    return () => {
+      isHoveredRef.current = false;
+      element.removeEventListener('mouseenter', handleMouseEnter);
+      element.removeEventListener('mouseleave', handleMouseLeave);
+      element.removeEventListener('mousemove', handleMouseMove);
+      element.removeEventListener('click', handleClick);
+      clearAllParticles();
+    };
+  }, [animateParticles, clearAllParticles, disableAnimations, enableTilt, enableMagnetism, clickEffect, glowColor]);
+
+  return (
+    <div
+      ref={cardRef}
+      className={`${className} particle-container`}
+      style={{ ...style, position: 'relative', overflow: 'hidden' }}
+    >
+      {children}
+    </div>
+  );
+};
+
+const GlobalSpotlight: React.FC<{
+  gridRef: React.RefObject<HTMLDivElement | null>;
+  disableAnimations?: boolean;
+  enabled?: boolean;
+  spotlightRadius?: number;
+  glowColor?: string;
+}> = ({
+  gridRef,
+  disableAnimations = false,
+  enabled = true,
+  spotlightRadius = DEFAULT_SPOTLIGHT_RADIUS,
+  glowColor = DEFAULT_GLOW_COLOR
+}) => {
+  const spotlightRef = useRef<HTMLDivElement | null>(null);
+  const isInsideSection = useRef(false);
+
+  useEffect(() => {
+    if (disableAnimations || !gridRef?.current || !enabled) return;
+
+    const spotlight = document.createElement('div');
+    spotlight.className = 'global-spotlight';
+    spotlight.style.cssText = `
+      position: fixed;
+      width: 800px;
+      height: 800px;
+      border-radius: 50%;
+      pointer-events: none;
+      background: radial-gradient(circle,
+        rgba(${glowColor}, 0.15) 0%,
+        rgba(${glowColor}, 0.08) 15%,
+        rgba(${glowColor}, 0.04) 25%,
+        rgba(${glowColor}, 0.02) 40%,
+        rgba(${glowColor}, 0.01) 65%,
+        transparent 70%
+      );
+      z-index: 200;
+      opacity: 0;
+      transform: translate(-50%, -50%);
+      mix-blend-mode: screen;
+    `;
+    document.body.appendChild(spotlight);
+    spotlightRef.current = spotlight;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!spotlightRef.current || !gridRef.current) return;
+
+      const section = gridRef.current.closest('.bento-section');
+      const rect = section?.getBoundingClientRect();
+      const mouseInside =
+        rect && e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+
+      isInsideSection.current = mouseInside || false;
+      const cards = gridRef.current.querySelectorAll('.magic-bento-card');
+
+      if (!mouseInside) {
+        gsap.to(spotlightRef.current, {
+          opacity: 0,
+          duration: 0.3,
+          ease: 'power2.out'
+        });
+        cards.forEach(card => {
+          (card as HTMLElement).style.setProperty('--glow-intensity', '0');
+        });
+        return;
+      }
+
+      const { proximity, fadeDistance } = calculateSpotlightValues(spotlightRadius);
+      let minDistance = Infinity;
+
+      cards.forEach(card => {
+        const cardElement = card as HTMLElement;
+        const cardRect = cardElement.getBoundingClientRect();
+        const centerX = cardRect.left + cardRect.width / 2;
+        const centerY = cardRect.top + cardRect.height / 2;
+        const distance =
+          Math.hypot(e.clientX - centerX, e.clientY - centerY) - Math.max(cardRect.width, cardRect.height) / 2;
+        const effectiveDistance = Math.max(0, distance);
+
+        minDistance = Math.min(minDistance, effectiveDistance);
+
+        let glowIntensity = 0;
+        if (effectiveDistance <= proximity) {
+          glowIntensity = 1;
+        } else if (effectiveDistance <= fadeDistance) {
+          glowIntensity = (fadeDistance - effectiveDistance) / (fadeDistance - proximity);
+        }
+
+        updateCardGlowProperties(cardElement, e.clientX, e.clientY, glowIntensity, spotlightRadius);
+      });
+
+      gsap.to(spotlightRef.current, {
+        left: e.clientX,
+        top: e.clientY,
+        duration: 0.1,
+        ease: 'power2.out'
+      });
+
+      const targetOpacity =
+        minDistance <= proximity
+          ? 0.8
+          : minDistance <= fadeDistance
+            ? ((fadeDistance - minDistance) / (fadeDistance - proximity)) * 0.8
+            : 0;
+
+      gsap.to(spotlightRef.current, {
+        opacity: targetOpacity,
+        duration: targetOpacity > 0 ? 0.2 : 0.5,
+        ease: 'power2.out'
+      });
+    };
+
+    const handleMouseLeave = () => {
+      isInsideSection.current = false;
+      gridRef.current?.querySelectorAll('.magic-bento-card').forEach(card => {
+        (card as HTMLElement).style.setProperty('--glow-intensity', '0');
+      });
+      if (spotlightRef.current) {
+        gsap.to(spotlightRef.current, {
+          opacity: 0,
+          duration: 0.3,
+          ease: 'power2.out'
+        });
+      }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseleave', handleMouseLeave);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseleave', handleMouseLeave);
+      spotlightRef.current?.parentNode?.removeChild(spotlightRef.current);
+    };
+  }, [gridRef, disableAnimations, enabled, spotlightRadius, glowColor]);
+
+  return null;
+};
+
+const BentoCardGrid: React.FC<{
+  children: React.ReactNode;
+  gridRef?: React.RefObject<HTMLDivElement | null>;
+}> = ({ children, gridRef }) => (
+  <div className="card-grid bento-section" ref={gridRef}>
+    {children}
+  </div>
+);
+
+const useMobileDetection = () => {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  return isMobile;
+};
+
+const MagicBento: React.FC<BentoProps> = ({
+  textAutoHide = true,
+  enableStars = true,
+  enableSpotlight = true,
+  enableBorderGlow = true,
+  disableAnimations = false,
+  spotlightRadius = DEFAULT_SPOTLIGHT_RADIUS,
+  particleCount = DEFAULT_PARTICLE_COUNT,
+  enableTilt = false,
+  glowColor = DEFAULT_GLOW_COLOR,
+  clickEffect = true,
+  enableMagnetism = true
+}) => {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const isMobile = useMobileDetection();
+  const shouldDisableAnimations = disableAnimations || isMobile;
+
+  return (
+    <>
+      {enableSpotlight && (
+        <GlobalSpotlight
+          gridRef={gridRef}
+          disableAnimations={shouldDisableAnimations}
+          enabled={enableSpotlight}
+          spotlightRadius={spotlightRadius}
+          glowColor={glowColor}
+        />
+      )}
+
+      <BentoCardGrid gridRef={gridRef}>
+        {cardData.map((card, index) => {
+          const baseClassName = `magic-bento-card ${textAutoHide ? 'magic-bento-card--text-autohide' : ''} ${enableBorderGlow ? 'magic-bento-card--border-glow' : ''}`;
+          const cardProps = {
+            className: baseClassName,
+            style: {
+              backgroundColor: card.color,
+              '--glow-color': glowColor
+            } as React.CSSProperties
+          };
+
+          if (enableStars) {
+            return (
+              <ParticleCard
+                key={index}
+                {...cardProps}
+                disableAnimations={shouldDisableAnimations}
+                particleCount={particleCount}
+                glowColor={glowColor}
+                enableTilt={enableTilt}
+                clickEffect={clickEffect}
+                enableMagnetism={enableMagnetism}
+              >
+                <div className="magic-bento-card__header">
+                  <div className="magic-bento-card__label">{card.label}</div>
+                </div>
+                <div className="magic-bento-card__content">
+                  <h2 className="magic-bento-card__title">{card.title}</h2>
+                  <p className="magic-bento-card__description">{card.description}</p>
+                </div>
+              </ParticleCard>
+            );
+          }
+
+          return (
+            <div
+              key={index}
+              {...cardProps}
+              ref={el => {
+                if (!el) return;
+
+                const handleMouseMove = (e: MouseEvent) => {
+                  if (shouldDisableAnimations) return;
+
+                  const rect = el.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+                  const centerX = rect.width / 2;
+                  const centerY = rect.height / 2;
+
+                  if (enableTilt) {
+                    const rotateX = ((y - centerY) / centerY) * -10;
+                    const rotateY = ((x - centerX) / centerX) * 10;
+                    gsap.to(el, {
+                      rotateX,
+                      rotateY,
+                      duration: 0.1,
+                      ease: 'power2.out',
+                      transformPerspective: 1000
+                    });
+                  }
+
+                  if (enableMagnetism) {
+                    const magnetX = (x - centerX) * 0.05;
+                    const magnetY = (y - centerY) * 0.05;
+                    gsap.to(el, {
+                      x: magnetX,
+                      y: magnetY,
+                      duration: 0.3,
+                      ease: 'power2.out'
+                    });
+                  }
+                };
+
+                const handleMouseLeave = () => {
+                  if (shouldDisableAnimations) return;
+
+                  if (enableTilt) {
+                    gsap.to(el, {
+                      rotateX: 0,
+                      rotateY: 0,
+                      duration: 0.3,
+                      ease: 'power2.out'
+                    });
+                  }
+
+                  if (enableMagnetism) {
+                    gsap.to(el, {
+                      x: 0,
+                      y: 0,
+                      duration: 0.3,
+                      ease: 'power2.out'
+                    });
+                  }
+                };
+
+                const handleClick = (e: MouseEvent) => {
+                  if (!clickEffect || shouldDisableAnimations) return;
+
+                  const rect = el.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+
+                  // Calculate the maximum distance from click point to any corner
+                  const maxDistance = Math.max(
+                    Math.hypot(x, y),
+                    Math.hypot(x - rect.width, y),
+                    Math.hypot(x, y - rect.height),
+                    Math.hypot(x - rect.width, y - rect.height)
+                  );
+
+                  const ripple = document.createElement('div');
+                  ripple.style.cssText = `
+                    position: absolute;
+                    width: ${maxDistance * 2}px;
+                    height: ${maxDistance * 2}px;
+                    border-radius: 50%;
+                    background: radial-gradient(circle, rgba(${glowColor}, 0.4) 0%, rgba(${glowColor}, 0.2) 30%, transparent 70%);
+                    left: ${x - maxDistance}px;
+                    top: ${y - maxDistance}px;
+                    pointer-events: none;
+                    z-index: 1000;
+                  `;
+
+                  el.appendChild(ripple);
+
+                  gsap.fromTo(
+                    ripple,
+                    {
+                      scale: 0,
+                      opacity: 1
+                    },
+                    {
+                      scale: 1,
+                      opacity: 0,
+                      duration: 0.8,
+                      ease: 'power2.out',
+                      onComplete: () => ripple.remove()
+                    }
+                  );
+                };
+
+                el.addEventListener('mousemove', handleMouseMove);
+                el.addEventListener('mouseleave', handleMouseLeave);
+                el.addEventListener('click', handleClick);
+              }}
+            >
+              <div className="magic-bento-card__header">
+                <div className="magic-bento-card__label">{card.label}</div>
+              </div>
+              <div className="magic-bento-card__content">
+                <h2 className="magic-bento-card__title">{card.title}</h2>
+                <p className="magic-bento-card__description">{card.description}</p>
+              </div>
+            </div>
+          );
+        })}
+      </BentoCardGrid>
+    </>
+  );
+};
+
+export default MagicBento;
+
+```
+
+### Component CSS
+```css
+:root {
+  --hue: 27;
+  --sat: 69%;
+  --white: hsl(0, 0%, 100%);
+  --purple-primary: rgba(132, 0, 255, 1);
+  --purple-glow: rgba(132, 0, 255, 0.2);
+  --purple-border: rgba(132, 0, 255, 0.8);
+  --border-color: #2F293A;
+  --background-dark: #120F17;
+  color-scheme: light dark;
+}
+
+.card-grid {
+  display: grid;
+  gap: 0.5em;
+  padding: 0.75em;
+  max-width: 54em;
+  font-size: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
+}
+
+.magic-bento-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  aspect-ratio: 4/3;
+  min-height: 200px;
+  width: 100%;
+  max-width: 100%;
+  padding: 1.25em;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: var(--background-dark);
+  font-weight: 300;
+  overflow: hidden;
+  transition: all 0.3s ease;
+
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-intensity: 0;
+  --glow-radius: 200px;
+}
+
+.magic-bento-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.magic-bento-card__header,
+.magic-bento-card__content {
+  display: flex;
+  position: relative;
+  color: var(--white);
+}
+
+.magic-bento-card__header {
+  gap: 0.75em;
+  justify-content: space-between;
+}
+
+.magic-bento-card__content {
+  flex-direction: column;
+}
+
+.magic-bento-card__label {
+  font-size: 16px;
+}
+
+.magic-bento-card__title,
+.magic-bento-card__description {
+  --clamp-title: 1;
+  --clamp-desc: 2;
+}
+
+.magic-bento-card__title {
+  font-weight: 400;
+  font-size: 16px;
+  margin: 0 0 0.25em;
+}
+
+.magic-bento-card__description {
+  font-size: 12px;
+  line-height: 1.2;
+  opacity: 0.9;
+}
+
+.magic-bento-card--text-autohide .magic-bento-card__title,
+.magic-bento-card--text-autohide .magic-bento-card__description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.magic-bento-card--text-autohide .magic-bento-card__title {
+  -webkit-line-clamp: var(--clamp-title);
+  line-clamp: var(--clamp-title);
+}
+
+.magic-bento-card--text-autohide .magic-bento-card__description {
+  -webkit-line-clamp: var(--clamp-desc);
+  line-clamp: var(--clamp-desc);
+}
+
+@media (max-width: 599px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+    width: 90%;
+    margin: 0 auto;
+    padding: 0.5em;
+  }
+
+  .magic-bento-card {
+    width: 100%;
+    min-height: 180px;
+  }
+}
+
+@media (min-width: 600px) {
+  .card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .card-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .magic-bento-card:nth-child(3) {
+    grid-column: span 2;
+    grid-row: span 2;
+  }
+
+  .magic-bento-card:nth-child(4) {
+    grid-column: 1 / span 2;
+    grid-row: 2 / span 2;
+  }
+
+  .magic-bento-card:nth-child(6) {
+    grid-column: 4;
+    grid-row: 3;
+  }
+}
+
+/* Border glow effect */
+.magic-bento-card--border-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 6px;
+  background: radial-gradient(
+    var(--glow-radius) circle at var(--glow-x) var(--glow-y),
+    rgba(132, 0, 255, calc(var(--glow-intensity) * 0.8)) 0%,
+    rgba(132, 0, 255, calc(var(--glow-intensity) * 0.4)) 30%,
+    transparent 60%
+  );
+  border-radius: inherit;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+}
+
+.magic-bento-card--border-glow:hover::after {
+  opacity: 1;
+}
+
+.magic-bento-card--border-glow:hover {
+  box-shadow:
+    0 4px 20px rgba(46, 24, 78, 0.4),
+    0 0 30px var(--purple-glow);
+}
+
+.particle-container {
+  position: relative;
+  overflow: hidden;
+}
+
+.particle::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  background: rgba(132, 0, 255, 0.2);
+  border-radius: 50%;
+  z-index: -1;
+}
+
+.particle-container:hover {
+  box-shadow:
+    0 4px 20px rgba(46, 24, 78, 0.2),
+    0 0 30px var(--purple-glow);
+}
+
+/* Global spotlight styles */
+.global-spotlight {
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+  z-index: 200 !important;
+  pointer-events: none;
+}
+
+.bento-section {
+  position: relative;
+  user-select: none;
+}
+
+```
+
+### Integration Instructions
+1. Install any listed dependencies.
+2. Copy the component source into the appropriate directory in the project.
+3. Import the CSS file alongside the component.
+4. Import and render the component using the usage example above as a starting point.
+5. Adjust props as needed for the specific use case — refer to the props table for all available options.
+
+### More from React Bits
+The full library index, including everything reactbits.dev offers, is at https://reactbits.dev/llms.txt — fetch it if this component is not the right fit or the project needs more pieces.
+"
+the background should be an aero shards background use this prompt
+"## Integrate the <AeroShards /> component from React Bits
+
+You are helping integrate an open-source React component into an existing application.
+
+### Component: AeroShards
+### Variant: TypeScript + CSS
+### Dependencies: vgpu
+
+---
+
+### Usage Example
+```jsx
+import AeroShards from './AeroShards';
+
+<div style={{ width: '100%', height: '600px', position: 'relative' }}>
+  <AeroShards
+    backgroundColor="#120F17"
+    shardColor="#896ABD"
+    accentColor="#A855F7"
+    placement="full"
+    flow="stream"
+    material="pearl"
+    detail="balanced"
+    effect="none"
+    scale={1}
+    spread={1}
+    depth={1}
+    speed={1}
+    spin={1}
+    interaction="repel"
+    density={1.5}
+    shardSize={1.1}
+    stretch={1}
+    turbulence={1}
+    glow={1}
+    edgeSoftness={2}
+    bloom={0.5}
+    grain={0.05}
+    chromaticAberration={0.0075}
+    transitionDuration={1}
+    interactionRadius={1.5}
+    interactionStrength={0.5}
+    rippleIntensity={1}
+    holdToGather={true}
+  />
+</div>
+```
+
+### Props
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| backgroundColor | string | '#120F17' | Background behind the wind sculpture. Lighting and bloom adapt automatically to light surfaces. |
+| shardColor | string | '#896ABD' | Primary body color for the shards. |
+| accentColor | string | '#A855F7' | Accent color used to derive reflections, depth, and highlights. |
+| placement | 'right' | 'left' | 'center' | 'full' | 'full' | Places the sculpture while preserving a content-safe region. |
+| material | 'pearl' | 'chrome' | 'satin' | 'pearl' | Applies a complete lighting and surface finish. |
+| detail | 'bold' | 'balanced' | 'fine' | 'balanced' | Balances shard count and size into a finished visual texture. |
+| flow | 'stream' | 'vortex' | 'ribbon' | 'stream' | Morphs the same shards between a flowing stream, circulating vortex, and twisted ribbon without restarting the animation. |
+| rippleIntensity | number | 1 | Strength of the click/release wave and its accent-colored illumination. Set to 0 to disable ripples. |
+| holdToGather | boolean | tr

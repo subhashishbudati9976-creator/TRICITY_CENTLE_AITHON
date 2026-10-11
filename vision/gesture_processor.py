@@ -5,6 +5,7 @@ pinch hysteresis, click-freeze anchoring, and tracking loss grace hold.
 """
 
 import math
+import threading
 import time
 from typing import Optional, Tuple
 
@@ -105,6 +106,8 @@ class GestureProcessor:
         pinch_up_threshold: float = 0.35,
         click_cooldown: float = 0.40,
         freeze_duration: float = 0.12,
+        pinch_activation_frames: int = 2,
+        pinch_release_frames: int = 2,
         box_margin_x: float = 0.12,
         box_margin_y: float = 0.12,
     ):
@@ -121,12 +124,23 @@ class GestureProcessor:
         self.filter_y = OneEuroFilter(min_cutoff=min_cutoff, beta=beta)
 
         # Hysteresis thresholds for pinch
-        self.pinch_down_threshold = pinch_down_threshold
-        self.pinch_up_threshold = pinch_up_threshold
+        self.pinch_down_threshold = max(0.0, float(pinch_down_threshold))
+        self.pinch_up_threshold = max(
+            self.pinch_down_threshold + 0.001, float(pinch_up_threshold)
+        )
+        self.pinch_activation_frames = max(1, int(pinch_activation_frames))
+        self.pinch_release_frames = max(1, int(pinch_release_frames))
         self.click_cooldown = click_cooldown
         self.freeze_duration = freeze_duration
 
-        # State tracking
+        # The camera thread owns pinch detection; the mouse worker owns click transitions.
+        self.pinch_detected = False
+        self.pinch_armed = True
+        self.pinch_arm_count = 0
+        self.pinch_start_count = 0
+        self.pinch_release_count = 0
+        self.pinch_state_lock = threading.Lock()
+        self.cursor_state_lock = threading.RLock()
         self.is_pinching = False
         self.last_click_time = 0.0
         self.last_pinch_start = 0.0
@@ -145,6 +159,10 @@ class GestureProcessor:
         min_cutoff: Optional[float] = None,
         beta: Optional[float] = None,
         click_cooldown: Optional[float] = None,
+        pinch_down_threshold: Optional[float] = None,
+        pinch_up_threshold: Optional[float] = None,
+        pinch_activation_frames: Optional[int] = None,
+        pinch_release_frames: Optional[int] = None,
     ):
         """Allows dynamic live tuning of sensitivity and smoothing parameters."""
         if sensitivity is not None:
@@ -157,6 +175,18 @@ class GestureProcessor:
             self.filter_y.beta = float(beta)
         if click_cooldown is not None:
             self.click_cooldown = max(0.1, float(click_cooldown))
+        if pinch_down_threshold is not None:
+            self.pinch_down_threshold = max(0.0, float(pinch_down_threshold))
+            if self.pinch_up_threshold <= self.pinch_down_threshold:
+                self.pinch_up_threshold = self.pinch_down_threshold + 0.001
+        if pinch_up_threshold is not None:
+            self.pinch_up_threshold = max(
+                self.pinch_down_threshold + 0.001, float(pinch_up_threshold)
+            )
+        if pinch_activation_frames is not None:
+            self.pinch_activation_frames = max(1, int(pinch_activation_frames))
+        if pinch_release_frames is not None:
+            self.pinch_release_frames = max(1, int(pinch_release_frames))
 
     def map_coordinates(self, norm_x: float, norm_y: float) -> Tuple[float, float]:
         """
@@ -210,18 +240,49 @@ class GestureProcessor:
         palm_size = math.hypot(middle_mcp_x - wrist_x, middle_mcp_y - wrist_y)
         pinch_ratio = pinch_dist / palm_size if palm_size > 0.001 else 1.0
 
-        if not self.is_pinching:
-            # Entering pinch requires reaching the tighter threshold
-            if pinch_ratio < self.pinch_down_threshold:
-                self.is_pinching = True
-        else:
-            # Exiting pinch requires relaxing beyond the upper threshold
-            if pinch_ratio > self.pinch_up_threshold:
-                self.is_pinching = False
+        with self.pinch_state_lock:
+            if not self.pinch_armed:
+                if pinch_ratio >= self.pinch_up_threshold:
+                    self.pinch_arm_count += 1
+                    if self.pinch_arm_count >= self.pinch_release_frames:
+                        self.pinch_armed = True
+                        self.pinch_arm_count = 0
+                else:
+                    self.pinch_arm_count = 0
+                return False, pinch_ratio
 
-        return self.is_pinching, pinch_ratio
+            if not self.pinch_detected:
+                if pinch_ratio < self.pinch_down_threshold:
+                    self.pinch_start_count += 1
+                    if self.pinch_start_count >= self.pinch_activation_frames:
+                        self.pinch_detected = True
+                        self.pinch_start_count = 0
+                else:
+                    self.pinch_start_count = 0
+            else:
+                if pinch_ratio > self.pinch_up_threshold:
+                    self.pinch_release_count += 1
+                    if self.pinch_release_count >= self.pinch_release_frames:
+                        self.pinch_detected = False
+                        self.pinch_armed = True
+                        self.pinch_release_count = 0
+                else:
+                    self.pinch_release_count = 0
+
+            return self.pinch_detected, pinch_ratio
 
     def process_frame(
+        self,
+        norm_x: Optional[float],
+        norm_y: Optional[float],
+        raw_pinching: bool,
+        timestamp: Optional[float] = None,
+    ) -> Tuple[Optional[int], Optional[int], bool]:
+        """Process a cursor sample while protecting mouse-worker state from resets."""
+        with self.cursor_state_lock:
+            return self._process_frame_unlocked(norm_x, norm_y, raw_pinching, timestamp)
+
+    def _process_frame_unlocked(
         self,
         norm_x: Optional[float],
         norm_y: Optional[float],
@@ -243,7 +304,7 @@ class GestureProcessor:
                 # Hold previous filtered position during brief dropouts
                 return int(self.last_valid_screen_x), int(self.last_valid_screen_y), False
             # Beyond grace period, reset filter states to prevent teleporting
-            self.reset()
+            self.reset_cursor_state()
             return None, None, False
 
         self.consecutive_missing = 0
@@ -289,13 +350,28 @@ class GestureProcessor:
 
         return int(round(out_x)), int(round(out_y)), trigger_click
 
+    def reset_pinch_detection(self, require_open: bool = True):
+        """Reset only the camera-thread pinch detector, for example after hand loss."""
+        with self.pinch_state_lock:
+            self.pinch_detected = False
+            self.pinch_armed = not require_open
+            self.pinch_arm_count = 0
+            self.pinch_start_count = 0
+            self.pinch_release_count = 0
+
+    def reset_cursor_state(self):
+        """Reset only mouse-worker filtering and click-transition state."""
+        with self.cursor_state_lock:
+            self.filter_x.reset()
+            self.filter_y.reset()
+            self.is_pinching = False
+            self.frozen_x = None
+            self.frozen_y = None
+            self.last_valid_screen_x = None
+            self.last_valid_screen_y = None
+            self.consecutive_missing = 0
+
     def reset(self):
-        """Reset internal filter states when tracking is lost or paused."""
-        self.filter_x.reset()
-        self.filter_y.reset()
-        self.is_pinching = False
-        self.frozen_x = None
-        self.frozen_y = None
-        self.last_valid_screen_x = None
-        self.last_valid_screen_y = None
-        self.consecutive_missing = 0
+        """Reset both gesture components when control is explicitly reset."""
+        self.reset_pinch_detection()
+        self.reset_cursor_state()

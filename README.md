@@ -51,11 +51,13 @@ Every feature listed below is verified against the codebase and validated by aut
 - [x] **Application Launching (Allowlist):** Safe voice execution launching Google Chrome, Notepad, and Calculator via argument lists without `shell=True`.
 - [x] **Website Tab Navigation:** Voice commands (`"Open LinkedIn in Chrome"`, `"Open GitHub in Chrome"`, `"Open YouTube in Chrome"`) launching or creating tabs in Chrome.
 - [x] **Command Deduplication:** 0.6-second debounce preventing accidental double-triggers.
-- [x] **Japanese Minimal × Swiss Engineering Interface:** Restrained palette, numbered section labels `[ 01 ]`, monospaced telemetry, and red recording indicator `● REC`.
+- [x] **Japanese Minimal × Swiss Engineering Interface:** Restrained palette, bundled Space Grotesk headings and controls, numbered section labels `[ 01 ]`, monospaced telemetry, and red recording indicator `● REC`. The font and its SIL Open Font License are included under `ui/assets/fonts/`.
 - [x] **Chronological Telemetry Audit Log:** Real-time instrument readout displaying timestamps, input sources, actions, and execution statuses.
 - [x] **Live Parameter Calibration:** Interactive sliders for sensitivity, 1€ filter cutoff, and click debounce.
 - [x] **Online Cloud Voice Control:** Google Speech Recognition with an automatic 1-retry mechanism for momentary unclear speech.
 - [x] **100% Offline Local Voice Control:** Embedded Vosk Kaldi engine (`vosk-model-en-us-0.22-lgraph`) operating on 16kHz raw PCM audio buffers with zero internet connectivity.
+- [x] **Safe Assistant Actions:** Validated capability registry, bounded file search, text entry, accessibility settings, task progress/cancellation, and confirmation for consequential actions.
+- [x] **Optional AI Chat & Intent:** Gemini can answer information questions and interpret flexible requests into registered actions. Responses cannot execute arbitrary shell commands or code.
 - [x] **Subsystem Decoupling:** Voice control operates independently of camera state or mouse pause toggle.
 - [x] **Hardware Pause & PyAutoGUI Fail-Safe:** Dedicated UI button, voice commands (`"pause control"`, `"resume control"`), and emergency corner slam (`(0, 0)`) intercept.
 
@@ -198,6 +200,12 @@ AirControl/
 > [!NOTE]
 > All unrecognized or non-allowlisted phrases are safely rejected with `Unknown command: <text>` and execute **zero** desktop actions.
 
+The optional AI assistant is disabled unless configured in `.env`. It can answer general questions and interpret flexible action requests; every proposed action is validated against the local capability registry before execution. Deterministic built-in commands, including Vosk transcription, remain available without AI credentials or network access. Only implemented registry actions can be executed.
+
+Additional requests include web search (for example, `"search for tutorials on Google"`), file lookup in a selected folder (for example, `"find my resume in Documents folder"`), opening known folders or the Recycle Bin, typing dictated text, opening Windows text-size settings, and reporting AirControl's current status. Supported operations remain allowlisted; unsupported requests are rejected. Workstation lock and closing the current browser tab require confirmation.
+
+Set `AIRCONTROL_DISPLAY_FONT` and `AIRCONTROL_BODY_FONT` to choose installed UI fonts. AirControl falls back to the bundled Space Grotesk and Segoe UI fonts when the preferred system fonts are unavailable.
+
 ---
 
 ## 8. Installation & Quickstart (Windows)
@@ -219,9 +227,17 @@ python -m venv .venv
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Launch AirControl
+# 4. (Optional) Configure AI chat and flexible voice requests
+Copy-Item .env.example .env
+notepad .env
+# Create a key at https://aistudio.google.com/app/apikey and set AIRCONTROL_AI_API_KEY.
+# AIRCONTROL_AI_MODEL defaults to gemini-3.5-flash-lite; do not share or commit .env.
+
+# 5. Launch AirControl
 python main.py
 ```
+
+Optional AI answers and natural-language interpretation use Google's official `google-genai` SDK. Get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey), add it to `AIRCONTROL_AI_API_KEY` in the project `.env`, and optionally set `AIRCONTROL_AI_MODEL` (default: `gemini-3.5-flash-lite`) and `AIRCONTROL_AI_TIMEOUT_SECONDS` (default: 12). AirControl never silently switches models. In Online voice mode, the recognized transcript and up to three recent conversation turns may be sent to Google; microphone audio is not sent by the planner. Offline voice mode disables cloud AI interpretation and uses Vosk plus local help. Without configuration, built-in commands and local capability/gesture answers remain available.
 
 For full setup details and troubleshooting, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
@@ -229,16 +245,11 @@ For full setup details and troubleshooting, see [docs/USER_GUIDE.md](docs/USER_G
 
 ## 9. Testing & Quality Verification
 
-AirControl is validated by **27 automated tests** covering command parsing, offline/online recognition, error propagation, and worker decoupling:
+AirControl's test suite covers command parsing, Gemini interpretation and validation, offline/online recognition, error propagation, gesture transitions, and worker decoupling:
 
 ```powershell
 # Run the test suite:
 .\.venv\Scripts\python -m pytest -v
-```
-
-**Verified Test Result:**
-```text
-======================= 27 passed, 2 warnings in 1.69s ========================
 ```
 
 For the complete test matrix, mocking strategy, and manual verification procedures, see [docs/TESTING.md](docs/TESTING.md).

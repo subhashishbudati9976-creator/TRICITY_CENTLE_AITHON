@@ -276,3 +276,140 @@ class ApplicationLauncher:
             return True, f"Action: Launch {display_name}", f"Launch {display_name}"
         except Exception as exc:
             return False, f"Error launching {display_name}: {exc}", f"Launch {display_name}"
+
+    def close_application(
+        self,
+        query: str,
+        confirmation_fn: Optional[Callable[[str], bool]] = None,
+    ) -> Tuple[bool, str, str]:
+        """
+        Gracefully closes an open application or window matching the spoken query.
+        Never force-kills or terminates AirControl itself.
+        """
+        clean_query = query.strip()
+        lowered = clean_query.lower()
+
+        # 1. Handle "current / active" window requests
+        if lowered in (
+            "active",
+            "current",
+            "active window",
+            "the active window",
+            "current application",
+            "the current application",
+            "this window",
+            "this app",
+            "it",
+        ):
+            from actions.window_actions import WindowActions
+            return WindowActions().close_active_window()
+
+        # 2. Protection against closing AirControl itself unless explicitly commanded
+        if "aircontrol" in lowered and lowered != "aircontrol":
+            return False, "Refusing to close AirControl automatically.", "Close Application"
+
+        # 3. Resolve target name and process names
+        normalized_name = COMMON_ALIASES.get(lowered, lowered)
+        matched_name, _, _ = self.resolve_application(normalized_name)
+        target_name = matched_name or normalized_name
+
+        known_proc_map: Dict[str, List[str]] = {
+            "notepad": ["notepad.exe"],
+            "calculator": ["calculatorapp.exe", "calc.exe"],
+            "calc": ["calculatorapp.exe", "calc.exe"],
+            "chrome": ["chrome.exe"],
+            "google chrome": ["chrome.exe"],
+            "edge": ["msedge.exe"],
+            "ms edge": ["msedge.exe"],
+            "visual studio code": ["code.exe"],
+            "vscode": ["code.exe"],
+            "vs code": ["code.exe"],
+            "code": ["code.exe"],
+            "word": ["winword.exe"],
+            "excel": ["excel.exe"],
+            "powerpoint": ["powerpnt.exe"],
+            "settings": ["systemsettings.exe"],
+            "task manager": ["taskmgr.exe"],
+        }
+        candidate_exes = [
+            exe.lower()
+            for exe in known_proc_map.get(
+                target_name.lower(), [f"{target_name.lower()}.exe", target_name.lower()]
+            )
+        ]
+
+        # 4. Try graceful window close via PyGetWindow
+        try:
+            import pygetwindow as gw
+            windows = gw.getAllWindows()
+            for w in windows:
+                w_title = (w.title or "").strip()
+                if not w_title:
+                    continue
+                # Never close AirControl unless explicitly requested
+                if "aircontrol" in w_title.lower() and "aircontrol" not in lowered:
+                    continue
+                if target_name.lower() in w_title.lower() or lowered in w_title.lower():
+                    target_hwnd = getattr(w, "_hWnd", None)
+                    w.close()
+                    time.sleep(0.4)
+                    still_open = False
+                    for check_w in gw.getAllWindows():
+                        try:
+                            if (target_hwnd and getattr(check_w, "_hWnd", None) == target_hwnd) or (check_w.title and check_w.title == w_title):
+                                still_open = True
+                                break
+                        except Exception:
+                            pass
+                    if still_open:
+                        return True, f"Close request sent to '{w_title}'. Please review any unsaved changes.", f"Close {target_name.title()}"
+                    return True, f"Action: Closed window '{w_title}'", f"Close {target_name.title()}"
+        except Exception:
+            pass
+
+        # 5. Try graceful taskkill via PID from tasklist (without /F)
+        current_pid = os.getpid()
+        matched_pids: List[int] = []
+        try:
+            res = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                shell=False,
+                check=False,
+            )
+            import csv
+            import io
+            reader = csv.reader(io.StringIO(res.stdout))
+            for row in reader:
+                if len(row) >= 2:
+                    pname = row[0].lower().strip()
+                    try:
+                        pid = int(row[1])
+                    except (ValueError, TypeError):
+                        continue
+                    if pid == current_pid:
+                        continue
+                    if any(c_exe in pname or pname in c_exe for c_exe in candidate_exes):
+                        matched_pids.append(pid)
+        except Exception:
+            pass
+
+        if not matched_pids:
+            return False, f"Cannot close '{clean_query}': No running window or application found.", f"Close {clean_query}"
+
+        # Send graceful close (taskkill without /F sends WM_CLOSE to top-level windows)
+        for pid in matched_pids[:1]:  # Target the primary process
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid)],
+                    capture_output=True,
+                    shell=False,
+                    check=False,
+                )
+            except Exception as exc:
+                return False, f"Failed to close {clean_query}: {exc}", f"Close {clean_query}"
+
+        time.sleep(0.5)
+        return True, f"Action: Closed {clean_query.title()}", f"Close {clean_query.title()}"
+

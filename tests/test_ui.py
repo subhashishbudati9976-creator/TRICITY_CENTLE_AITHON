@@ -8,6 +8,11 @@ from ui.theme import (
     COLOR_SAGE,
     COLOR_STONE,
     COLOR_VERMILION,
+    FONT_BODY,
+    FONT_DISPLAY,
+    FONT_MONO,
+    FONT_SANS,
+    FONT_SERIF,
 )
 from ui.dashboard import SectionHeader, TelemetryLog, ValueSlider
 
@@ -20,6 +25,13 @@ class TestUIThemeAndComponents(unittest.TestCase):
         self.assertEqual(COLOR_VERMILION, "#C74735")
         self.assertEqual(COLOR_STONE, "#B9B5AA")
         self.assertEqual(COLOR_SAGE, "#7C8B78")
+
+    def test_typography_tokens(self):
+        self.assertIn(FONT_DISPLAY, {"Neue Haas Grotesk", "Space Grotesk", "Segoe UI"})
+        self.assertIn(FONT_BODY, {"Inter", "Segoe UI"})
+        self.assertEqual(FONT_DISPLAY, FONT_SERIF)
+        self.assertEqual(FONT_BODY, FONT_SANS)
+        self.assertEqual(FONT_MONO, "Consolas")
 
     @patch("customtkinter.CTkTextbox")
     @patch("customtkinter.CTkFrame")
@@ -49,6 +61,47 @@ class TestUIThemeAndComponents(unittest.TestCase):
         slider._handle_change(1.85)
         slider.val_label.configure.assert_called_with(text="1.85 x")
         callback.assert_called_once_with(1.85)
+
+    @patch("customtkinter.CTkFont")
+    @patch("customtkinter.CTkToplevel")
+    @patch("customtkinter.CTkFrame")
+    @patch("customtkinter.CTkLabel")
+    @patch("customtkinter.CTkButton")
+    def test_fullscreen_webcam_open_exit_toggle(
+        self, mock_btn, mock_lbl, mock_frame, mock_toplevel_cls, mock_font
+    ):
+        import main
+        mock_top_inst = MagicMock()
+        mock_toplevel_cls.return_value = mock_top_inst
+
+        app = main.AirControlApp.__new__(main.AirControlApp)
+        app.fullscreen_window = None
+        app.fullscreen_label = None
+        app.hand_var = MagicMock()
+        app.control_var = MagicMock()
+        app.focus_force = MagicMock()
+        app.task_cancel_event = MagicMock()
+
+        # Open fullscreen
+        app._open_fullscreen_webcam()
+        self.assertIsNotNone(app.fullscreen_window)
+        mock_top_inst.attributes.assert_called_with("-fullscreen", True)
+        mock_top_inst.bind.assert_any_call("<Escape>", unittest.mock.ANY)
+        mock_top_inst.bind.assert_any_call("<q>", unittest.mock.ANY)
+
+        # Calling toggle while open exits
+        mock_top_inst.winfo_exists.return_value = True
+        app._toggle_fullscreen_webcam()
+        mock_top_inst.destroy.assert_called_once()
+        self.assertIsNone(app.fullscreen_window)
+        self.assertIsNone(app.fullscreen_label)
+
+        # Repeated open and exit
+        mock_top_inst.reset_mock()
+        app._open_fullscreen_webcam()
+        self.assertIsNotNone(app.fullscreen_window)
+        app._exit_fullscreen_webcam()
+        self.assertIsNone(app.fullscreen_window)
 
 
 if __name__ == "__main__":

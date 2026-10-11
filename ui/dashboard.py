@@ -19,9 +19,9 @@ from ui.theme import (
     COLOR_STONE,
     COLOR_VERMILION,
     COLOR_VERMILION_HOVER,
+    FONT_DISPLAY,
     FONT_MONO,
     FONT_SANS,
-    FONT_SERIF,
 )
 
 
@@ -43,7 +43,7 @@ class SectionHeader(ctk.CTkFrame):
         heading = ctk.CTkLabel(
             self,
             text=title.upper(),
-            font=ctk.CTkFont(family=FONT_SANS, size=12, weight="bold"),
+            font=ctk.CTkFont(family=FONT_DISPLAY, size=12, weight="bold"),
             text_color=COLOR_IVORY,
         )
         heading.grid(row=0, column=1, sticky="w")

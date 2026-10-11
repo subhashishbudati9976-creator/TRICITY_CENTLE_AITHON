@@ -15,6 +15,9 @@ class TestCommandExecution(unittest.TestCase):
         self.app.command_queue = queue.Queue()
         self.app.control_queue = queue.Queue()
         self.app._publish_control = MagicMock()
+        self.app.command_router = main.CommandRouter(
+            app_context=self.app, ai_planner=None
+        )
 
     @patch("pyautogui.click")
     def test_click_command_when_paused(self, mock_click):
@@ -195,7 +198,64 @@ class TestCommandExecution(unittest.TestCase):
         status = self.app.status_queue.get_nowait()
         self.assertEqual(status, "Action: Launch Calculator")
 
+    @patch("actions.application_launcher.ApplicationLauncher.close_application")
+    def test_close_notepad_and_calculator(self, mock_close_app):
+        mock_close_app.return_value = (True, "Action: Closed Notepad", "Close Notepad")
+        self.app._execute_voice_command("Close Notepad")
+        mock_close_app.assert_called_with("notepad", confirmation_fn=unittest.mock.ANY)
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Closed Notepad")
+
+        self.app.command_router.last_command_time = 0.0
+        mock_close_app.return_value = (True, "Action: Closed Calculator", "Close Calculator")
+        self.app._execute_voice_command("Close Calculator")
+        mock_close_app.assert_called_with("calculator", confirmation_fn=unittest.mock.ANY)
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Closed Calculator")
+
+    @patch("actions.application_launcher.ApplicationLauncher.close_application")
+    def test_close_chrome(self, mock_close_app):
+        mock_close_app.return_value = (True, "Action: Closed Google Chrome", "Close Chrome")
+        self.app._execute_voice_command("Close Chrome")
+        mock_close_app.assert_called_with("chrome", confirmation_fn=unittest.mock.ANY)
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Closed Google Chrome")
+
+    @patch("actions.window_actions.WindowActions.close_active_window")
+    def test_close_active_window_and_current_application(self, mock_close_win):
+        mock_close_win.return_value = (True, "Action: Closed active window", "Close Window")
+        self.app._execute_voice_command("Close the active window")
+        mock_close_win.assert_called_once()
+        status = self.app.status_queue.get_nowait()
+        self.assertEqual(status, "Action: Closed active window")
+
+        self.app.command_router.last_command_time = 0.0
+        mock_close_win.reset_mock()
+        self.app._execute_voice_command("Close the current application")
+        mock_close_win.assert_called_once()
+
+    def test_aircontrol_self_termination_prevented(self):
+        from actions.application_launcher import ApplicationLauncher
+        launcher = ApplicationLauncher()
+        # Requesting "aircontrol" directly without user explicitly saying only "aircontrol"
+        success, msg, _ = launcher.close_application("the aircontrol application")
+        self.assertFalse(success)
+        self.assertIn("Refusing to close AirControl", msg)
+
+    @patch("subprocess.Popen")
+    @patch("actions.application_launcher.ApplicationLauncher.close_application")
+    @patch("core.command_router.CommandRouter.find_executable")
+    def test_compound_open_vscode_and_close_it(self, mock_find_exe, mock_close_app, mock_popen):
+        mock_find_exe.return_value = r"C:\Users\User\AppData\Local\Programs\Microsoft VS Code\Code.exe"
+        mock_close_app.return_value = (True, "Action: Closed Visual Studio Code", "Close Visual Studio Code")
+
+        self.app._execute_voice_command("Open VS Code and then close it")
+        mock_popen.assert_called_once()
+        mock_close_app.assert_called_once()
+        # Ensure 'it' was resolved to visual studio code
+        called_arg = mock_close_app.call_args[0][0]
+        self.assertIn("code", called_arg.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
-

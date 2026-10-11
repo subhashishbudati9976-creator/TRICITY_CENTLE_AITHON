@@ -13,7 +13,11 @@ from core.command_router import (
 class TestCommandRouter(unittest.TestCase):
     def setUp(self):
         self.mock_runner = MagicMock()
-        self.router = CommandRouter(debounce_seconds=0.5, process_runner=self.mock_runner)
+        self.router = CommandRouter(
+            debounce_seconds=0.5,
+            process_runner=self.mock_runner,
+            ai_planner=None,
+        )
         self.status_queue = queue.Queue()
         self.context = MagicMock()
         self.context.status_queue = self.status_queue
@@ -125,6 +129,40 @@ class TestCommandRouter(unittest.TestCase):
             self.assertEqual(label, "Unknown")
 
         self.mock_runner.assert_not_called()
+
+    @patch("actions.application_launcher.ApplicationLauncher.close_application")
+    def test_execute_close_application(self, mock_close_app):
+        mock_close_app.return_value = (True, "Action: Closed Notepad", "Close Notepad")
+        success, msg, label = self.router.execute("Close Notepad", app=self.context)
+        self.assertTrue(success)
+        mock_close_app.assert_called_with("notepad", confirmation_fn=unittest.mock.ANY)
+        self.assertEqual(label, "Close Notepad")
+
+    @patch("actions.window_actions.WindowActions.close_active_window")
+    def test_execute_close_active_window(self, mock_close_win):
+        mock_close_win.return_value = (True, "Action: Closed window 'Document1'", "Close Window")
+        success, msg, label = self.router.execute("Close active window", app=self.context)
+        self.assertTrue(success)
+        mock_close_win.assert_called_once()
+        self.assertEqual(label, "Close Window")
+
+    def test_close_nonexistent_application_reports_clear_error(self):
+        with patch("subprocess.run") as mock_subproc, patch("pygetwindow.getAllWindows", return_value=[]):
+            mock_subproc.return_value = MagicMock(stdout="", returncode=0)
+            success, msg, _ = self.router.app_launcher.close_application("NonExistentAppXYZ")
+            self.assertFalse(success)
+            self.assertIn("No running window or application found", msg)
+
+    def test_close_application_with_unsaved_changes_reports_notice(self):
+        mock_win = MagicMock()
+        mock_win.title = "Untitled - Notepad"
+        mock_win._hWnd = 12345
+        # Window remains in getAllWindows after close() because of unsaved changes prompt
+        with patch("pygetwindow.getAllWindows", return_value=[mock_win]):
+            success, msg, _ = self.router.app_launcher.close_application("notepad")
+            self.assertTrue(success)
+            mock_win.close.assert_called_once()
+            self.assertIn("review any unsaved changes", msg)
 
 
 if __name__ == "__main__":
