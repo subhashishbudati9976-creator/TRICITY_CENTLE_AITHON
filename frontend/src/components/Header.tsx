@@ -4,13 +4,21 @@ import TechText from './reactbits/TechText';
 interface HeaderProps {
   mousePaused: boolean;
   cameraConnected: boolean;
+  controlMode: 'cursor' | 'gesture';
+  gestureKeysEnabled: boolean;
   onToggleMouse: () => void;
+  onToggleControlMode: () => void;
+  onToggleGestureKeys: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   mousePaused,
   cameraConnected,
+  controlMode,
+  gestureKeysEnabled,
   onToggleMouse,
+  onToggleControlMode,
+  onToggleGestureKeys,
 }) => {
   return (
     <header className="air-header">
@@ -34,6 +42,45 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="header-badges">
+        {/* Mode Toggle & Badge */}
+        <div
+          className="status-badge"
+          style={{
+            cursor: 'pointer',
+            border: controlMode === 'gesture' ? '1px solid var(--color-vermilion)' : '1px solid rgba(99, 102, 241, 0.4)',
+          }}
+          onClick={onToggleControlMode}
+          title="Click to toggle between Cursor Mode and Gesture-Key Mode"
+        >
+          <span className={`status-dot ${controlMode === 'gesture' ? 'warn' : 'active'}`} />
+          <span>{controlMode === 'gesture' ? 'MODE: GESTURE KEYS' : 'MODE: CURSOR CONTROL'}</span>
+        </div>
+
+        <button
+          className="btn-ghost"
+          onClick={onToggleControlMode}
+          style={{ padding: '4px 10px', fontSize: '11px', height: '32px' }}
+          title="Switch active interaction mode"
+        >
+          Switch to {controlMode === 'cursor' ? 'Gesture Keys' : 'Cursor Mode'}
+        </button>
+
+        {controlMode === 'gesture' && (
+          <button
+            className={`btn-ghost ${gestureKeysEnabled ? 'active' : ''}`}
+            onClick={onToggleGestureKeys}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              height: '32px',
+              color: gestureKeysEnabled ? 'var(--color-sage)' : 'var(--color-stone)',
+            }}
+            title="Enable or disable gesture shortcuts"
+          >
+            Keys: {gestureKeysEnabled ? 'ON' : 'OFF'}
+          </button>
+        )}
+
         <div className="status-badge">
           <span className={`status-dot ${!mousePaused ? 'active' : ''}`} />
           <span>{!mousePaused ? 'ENGINE ACTIVE' : 'ENGINE STANDBY'}</span>
@@ -51,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({
             backgroundColor: mousePaused ? 'var(--color-vermilion)' : 'var(--color-indigo)',
           }}
         >
-          {mousePaused ? 'Enable Mouse Control' : 'Pause Mouse Control'}
+          {mousePaused ? 'Enable Control' : 'Pause Control'}
         </button>
       </div>
     </header>

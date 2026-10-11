@@ -2,13 +2,16 @@
 
 > **Touch-Free Multimodal Desktop Interaction via Real-Time Computer Vision and Decoupled Speech Control.**
 
-[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.8+-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands_21_Landmarks-007ACC?logo=google&logoColor=white)](https://mediapipe.dev/)
 [![Design](https://img.shields.io/badge/Aesthetic-Japanese_Minimal_%C3%97_Swiss_Engineering-20211F)](https://github.com/TomSchimansky/CustomTkinter)
 [![Vosk](https://img.shields.io/badge/Offline_STT-Vosk_Kaldi-orange)](https://alphacephei.com/vosk/)
-[![Pytest](https://img.shields.io/badge/Tests-48_Passed-brightgreen?logo=pytest&logoColor=white)](https://pytest.org/)
+[![Gemini](https://img.shields.io/badge/Optional_AI-Gemini_3.5_Flash--Lite-4285F4?logo=google&logoColor=white)](https://ai.google.dev/)
+[![Pytest](https://img.shields.io/badge/Tests-pytest-brightgreen?logo=pytest&logoColor=white)](https://pytest.org/)
 [![OS](https://img.shields.io/badge/Platform-Windows_10%20%2F%2011-0078D6?logo=windows&logoColor=white)](https://www.microsoft.com/windows)
+
+Built for the **Tri-City AI-Thon** (KITS Warangal, 24-hour hackathon).
 
 ---
 
@@ -18,54 +21,64 @@
 - **Tagline:** Touch-Free Multimodal Desktop Interaction via Real-Time Computer Vision and Decoupled Speech Control
 - **Visual Direction:** Japanese Minimal × Swiss Engineering (Warm Ivory, Charcoal Ink, Deep Indigo, Vermilion Red, Muted Stone, Soft Sage)
 - **Project Category:** Assistive Technology / Human-Computer Interaction (HCI) / Computer Vision
-- **Target Audience:** Users with motor or physical mobility limitations, professionals in sterile environments (medical, lab, culinary), presenters, and power users seeking touch-free computing.
-- **Primary Objective:** Provide a seamless, robust, and safe alternative to conventional mouse and keyboard peripherals by integrating continuous hand-gesture tracking with discrete, allowlisted voice commands into a single desktop application.
+- **Target Audience:** Users with motor or physical mobility limitations, professionals in sterile environments (medical, lab, culinary), presenters and teachers, and power users seeking touch-free computing.
+- **Primary Objective:** Provide a seamless, robust and safe alternative to conventional mouse and keyboard peripherals by combining continuous hand-gesture tracking with discrete, allowlisted voice commands in a single application.
 
 ---
 
 ## 2. Problem Statement & Proposed Solution
 
 ### The Problem
-Conventional desktop computing is tethered to physical mice and keyboards. This interaction paradigm presents serious challenges:
-- **Accessibility Barriers:** Individuals experiencing motor disabilities, repetitive strain injury (RSI), arthritis, or temporary physical injury face significant strain or outright exclusion.
-- **Sterile & Contaminated Environments:** In medical operating rooms, biochemical laboratories, cleanrooms, or even everyday cooking kitchens, touching physical peripherals introduces cross-contamination risks or degrades equipment.
-- **Physical Tethering:** Presenters and educators must remain adjacent to their podium to click slides or scroll through reference materials.
+Conventional desktop computing is tethered to physical mice and keyboards:
+- **Accessibility barriers:** People with motor disabilities, repetitive strain injury (RSI), arthritis or a temporary injury face strain or exclusion.
+- **Sterile and contaminated environments:** In operating rooms, laboratories, cleanrooms and kitchens, touching peripherals adds contamination risk.
+- **Physical tethering:** Presenters and educators must stay near the laptop to change slides or scroll.
 
 ### The Proposed Solution
-**AirControl** solves this through a unified, multimodal desktop application that combines:
-1. **Continuous Visual Input:** Live webcam stream analyzed by MediaPipe to detect 21 3D hand landmarks, smoothed with an adaptive **1€ Filter** (Casiez CHI 2012) and anchored with **Schmitt trigger pinch hysteresis**.
-2. **Discrete Voice Control:** Multi-backend speech recognition (Google Cloud STT for online conversational accuracy; local Vosk Kaldi neural model for 100% offline privacy) with a safe **Command Router** executing allowlisted desktop actions, application launches (*Chrome, Notepad, Calculator*), and tab navigations (*LinkedIn, GitHub, YouTube*).
-3. **Decoupled Architecture:** Unlike naive systems where voice recognition blocks the camera loop, AirControl's background worker threads and FIFO queues ensure voice commands execute immediately, even when mouse tracking is paused or the webcam is disconnected.
+AirControl is a unified, multimodal application that combines:
+1. **Continuous visual input:** a live webcam stream analyzed by MediaPipe (21 3D hand landmarks), smoothed with an adaptive **1€ filter** (Casiez, CHI 2012) and anchored by **Schmitt-trigger pinch hysteresis**.
+2. **Discrete voice control:** online recognition (Google speech) for accuracy, or offline recognition (Vosk Kaldi) for privacy, feeding a safe **Command Router** that executes only allowlisted desktop actions.
+3. **Decoupled architecture:** background worker threads and FIFO queues keep voice commands working even when mouse tracking is paused or the webcam is disconnected.
+4. **Optional AI assistant:** Gemini can answer questions and interpret flexible requests into registered actions only, never into arbitrary code.
 
 ---
 
-## 3. Key Implemented Features
+## 3. Key Features
 
-Every feature listed below is verified against the codebase and validated by automated tests:
+### Core features (verified against the codebase and covered by automated tests)
 
-- [x] **Real-Time Hand Tracking:** 30 FPS landmark tracking using MediaPipe Hands (21 3D points per hand) with horizontal mirror flipping.
-- [x] **Adaptive 1€ Filter Smoothing:** Velocity-responsive filtering eliminating jitter when still and eliminating lag during rapid hand sweeps.
-- [x] **Schmitt Trigger Pinch Hysteresis:** Dual threshold (`down < 0.28`, `up > 0.35`) eliminating contact chatter and boundary flicker.
-- [x] **Click-Freeze Anchor:** 120ms position lock during pinch-down to prevent the physical act of squeezing fingers from shifting the cursor off target.
-- [x] **Tracking Loss Grace Hold:** Retains last filtered position across brief occlusions (~130ms) before smoothly clearing state.
-- [x] **Application Launching (Allowlist):** Safe voice execution launching Google Chrome, Notepad, and Calculator via argument lists without `shell=True`.
-- [x] **Website Tab Navigation:** Voice commands (`"Open LinkedIn in Chrome"`, `"Open GitHub in Chrome"`, `"Open YouTube in Chrome"`) launching or creating tabs in Chrome.
-- [x] **Command Deduplication:** 0.6-second debounce preventing accidental double-triggers.
-- [x] **Japanese Minimal × Swiss Engineering Interface:** Restrained palette, bundled Space Grotesk headings and controls, numbered section labels `[ 01 ]`, monospaced telemetry, and red recording indicator `● REC`. The font and its SIL Open Font License are included under `ui/assets/fonts/`.
-- [x] **Chronological Telemetry Audit Log:** Real-time instrument readout displaying timestamps, input sources, actions, and execution statuses.
-- [x] **Live Parameter Calibration:** Interactive sliders for sensitivity, 1€ filter cutoff, and click debounce.
-- [x] **Online Cloud Voice Control:** Google Speech Recognition with an automatic 1-retry mechanism for momentary unclear speech.
-- [x] **100% Offline Local Voice Control:** Embedded Vosk Kaldi engine (`vosk-model-en-us-0.22-lgraph`) operating on 16kHz raw PCM audio buffers with zero internet connectivity.
-- [x] **Safe Assistant Actions:** Validated capability registry, bounded file search, text entry, accessibility settings, task progress/cancellation, and confirmation for consequential actions.
-- [x] **Optional AI Chat & Intent:** Gemini can answer information questions and interpret flexible requests into registered actions. Responses cannot execute arbitrary shell commands or code.
-- [x] **Subsystem Decoupling:** Voice control operates independently of camera state or mouse pause toggle.
-- [x] **Hardware Pause & PyAutoGUI Fail-Safe:** Dedicated UI button, voice commands (`"pause control"`, `"resume control"`), and emergency corner slam (`(0, 0)`) intercept.
+- [x] **Real-time hand tracking:** 30 FPS landmark tracking with MediaPipe Hands, with horizontal mirror flipping.
+- [x] **Adaptive 1€ filter smoothing:** velocity-responsive filtering that removes jitter at rest and lag during fast sweeps.
+- [x] **Schmitt-trigger pinch hysteresis:** dual threshold (`down < 0.28`, `up > 0.35`) to stop contact chatter.
+- [x] **Click-freeze anchor:** 120 ms position lock on pinch-down so squeezing the fingers does not move the cursor.
+- [x] **Tracking-loss grace hold:** keeps the last filtered position across brief occlusions (about 130 ms).
+- [x] **Application launching (allowlist):** Chrome, Notepad and Calculator launched with argument lists, never `shell=True`.
+- [x] **Website tab navigation:** "Open LinkedIn / GitHub / YouTube in Chrome".
+- [x] **Command deduplication:** 0.6 s debounce against accidental double triggers.
+- [x] **Japanese Minimal × Swiss Engineering interface:** restrained palette, bundled Space Grotesk font (SIL OFL license in `ui/assets/fonts/`), numbered section labels, monospaced telemetry and a `● REC` indicator.
+- [x] **Chronological telemetry audit log:** timestamps, input source, action and status.
+- [x] **Live parameter calibration:** sliders for sensitivity, 1€ filter cutoff and click debounce.
+- [x] **Online voice control:** Google Speech Recognition with an automatic one-time retry.
+- [x] **100% offline voice control:** embedded Vosk engine (`vosk-model-en-us-0.22-lgraph`) on 16 kHz PCM audio, no internet needed.
+- [x] **Safe assistant actions:** validated capability registry, bounded file search, text entry, accessibility settings, task progress/cancellation, and confirmation for consequential actions.
+- [x] **Optional AI chat and intent:** Gemini answers questions and maps flexible requests to registered actions. It cannot execute shell commands or code.
+- [x] **Subsystem decoupling:** voice works independently of camera state and the mouse pause toggle.
+- [x] **Hardware pause and PyAutoGUI fail-safe:** UI button, voice commands ("pause control", "resume control") and the emergency corner slam at `(0, 0)`.
+- [x] **Full-screen webcam preview.**
+
+### Latest additions (web dashboard and extended controls)
+
+- **Web dashboard:** FastAPI + WebSocket backend (`backend/web_server.py`, `backend/engine.py`) streaming the camera feed, landmarks, audit log and calibration values to a browser dashboard with animated components (heading animation, blur-in text, card hover effects, cursor glow trail, animated background).
+- **Spoken answers:** chatbot answers are shown as text and spoken aloud with the browser's built-in Chrome voice (Web Speech API), with an on/off toggle and a stop button. The microphone is ignored while the answer is speaking, so the app never hears itself.
+- **Fifteen gesture shortcuts** (table in section 7), held steady and rate-limited so one hold sends one keypress.
+- **Live scroll and zoom** by voice and gesture.
+- **Hands-free wake phrases:** "Hey AirControl, start listening" and "Hey AirControl, stop listening".
 
 ---
 
 ## 4. Software Architecture Overview
 
-AirControl separates concern across 5 logical layers connected by thread-safe FIFO queues:
+AirControl separates concerns across 5 logical layers connected by thread-safe FIFO queues:
 
 ```mermaid
 flowchart TD
@@ -109,15 +122,20 @@ flowchart TD
     ControlQ --> MouseWorker
     MouseWorker --> OS
 
-    subgraph Presentation ["Presentation Layer (Main Thread)"]
-        GUI["CustomTkinter Dashboard\n50Hz Poller (after 20ms)\nLive Video + Status Cards"]
+    subgraph Presentation ["Presentation Layer"]
+        GUI["CustomTkinter Dashboard (desktop)\n50Hz Poller (after 20ms)"]
+        WEB["Web Dashboard (FastAPI + WebSocket)\nLive video, logs, spoken answers"]
     end
 
     FrameQ --> GUI
     StatusQ --> GUI
+    FrameQ --> WEB
+    StatusQ --> WEB
 ```
 
-For the complete architectural specification, refer to [ARCHITECTURE.md](ARCHITECTURE.md).
+The presentation layer has two front ends over the same engine: the original CustomTkinter desktop app and the browser dashboard served by FastAPI.
+
+For the complete specification, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -125,17 +143,20 @@ For the complete architectural specification, refer to [ARCHITECTURE.md](ARCHITE
 
 | Technology | Role in AirControl | Where Used | Key Advantage |
 | :--- | :--- | :--- | :--- |
-| **Python 3.11** | Core application language & runtime coordinator | Entire codebase | High-level concurrency primitives; rich ecosystem for CV and audio. |
-| **OpenCV (`cv2`)** | Video frame capture, mirroring, preprocessing | `main.py` | DirectShow low-latency hardware access on Windows. |
-| **MediaPipe** | 21 3D hand landmark inference | `main.py` | Real-time on-device ML model with sub-millisecond CPU execution. |
-| **SpeechRecognition** | Audio capture & cloud STT interface | `voice/voice_controller.py` | Unified microphone streaming with energy threshold calibration. |
-| **Google Speech API** | High-accuracy online speech-to-text | `voice/voice_controller.py` | Zero-configuration cloud transcription with controlled 1-retry. |
-| **Vosk** | Local, offline speech-to-text | `voice/voice_controller.py` | 100% offline, privacy-first Kaldi neural model (~50MB). |
-| **PyAutoGUI** | OS mouse & keyboard automation | `main.py` | Cross-platform desktop input synthesis with emergency fail-safe. |
-| **CustomTkinter** | Modern dark-mode user interface | `main.py` | Hardware-accelerated UI rendering without webview bloat. |
-| **Pytest** | Automated unit & integration testing | `tests/` | Deterministic verification with hardware mocks. |
+| **Python 3.12** | Core language and runtime coordinator | Entire codebase | High-level concurrency primitives; rich CV and audio ecosystem. |
+| **OpenCV (`cv2`)** | Frame capture, mirroring, preprocessing | `main.py`, `backend/engine.py` | DirectShow low-latency camera access on Windows. |
+| **MediaPipe 0.10.14** | 21 3D hand landmark inference | `main.py`, `backend/engine.py` | Real-time on-device model on CPU. Pinned because newer releases removed `mp.solutions`. |
+| **SpeechRecognition** | Audio capture and cloud STT interface | `voice/voice_controller.py` | Unified microphone streaming with energy-threshold calibration. |
+| **Google Speech API** | Online speech-to-text | `voice/voice_controller.py` | Zero-configuration transcription with a controlled retry. |
+| **Vosk** | Offline speech-to-text | `voice/voice_controller.py` | 100% offline, privacy-first Kaldi model. |
+| **PyAutoGUI** | OS mouse and keyboard automation | `main.py`, `backend/engine.py` | Desktop input synthesis with emergency fail-safe. |
+| **CustomTkinter** | Desktop dark-mode interface | `main.py` | Modern UI without webview bloat. |
+| **FastAPI + Uvicorn + WebSockets** | Web dashboard backend and live streaming | `backend/web_server.py` | Low-latency push of video frames, logs and status to the browser. |
+| **Google Gemini (`google-genai`)** | Optional AI answers and intent interpretation | AI interpreter layer | Flexible language understanding, restricted to registered actions. |
+| **Web Speech API (Chrome)** | Spoken chatbot answers | Web dashboard | Built-in voices, no API key needed. |
+| **Pytest** | Automated unit and integration tests | `tests/` | Deterministic verification with hardware mocks. |
 
-For detailed technology analysis, refer to [docs/TECH_STACK.md](docs/TECH_STACK.md).
+For detailed analysis, see [docs/TECH_STACK.md](docs/TECH_STACK.md).
 
 ---
 
@@ -143,68 +164,90 @@ For detailed technology analysis, refer to [docs/TECH_STACK.md](docs/TECH_STACK.
 
 ```
 AirControl/
-├── .gitignore                      # Git ignore patterns (.venv, models, caches)
+├── .gitignore                      # Ignore patterns (.venv312, .env, models, caches)
+├── .env.example                    # Template for optional AI configuration
 ├── requirements.txt                # Python package dependencies
-├── main.py                         # Application entry point, GUI & worker coordination
+├── main.py                         # Desktop app entry point, GUI and worker coordination
+├── backend/                        # Web dashboard backend
+│   ├── __init__.py
+│   ├── engine.py                   # Camera, gesture and voice engine for the web dashboard
+│   └── web_server.py               # FastAPI app and WebSocket endpoints
+├── frontend/                       # Web dashboard UI (animated components)
 ├── voice/                          # Speech recognition subsystem
 │   ├── __init__.py
 │   └── voice_controller.py         # Dual-mode VoiceController (Online + Offline Vosk)
 ├── models/                         # Neural model storage
-│   └── vosk-model-en-us-0.22-lgraph/ # Bundled lightweight Vosk offline model
-├── tests/                          # Automated verification test suite
+│   └── vosk-model-en-us-0.22-lgraph/
+├── tests/                          # Automated test suite
 │   ├── __init__.py
-│   ├── test_commands.py            # Command normalization, allowlist & safety tests
-│   ├── test_decoupling.py          # State decoupling & worker loop tests
-│   └── test_voice.py               # Online/offline speech & hardware error tests
-├── docs/                           # In-depth technical documentation
-│   ├── ARCHITECTURE.md             # Architecture documentation link
-│   ├── PRESENTATION_GUIDE.md       # Presentation guide link
-│   ├── TECH_STACK.md               # Technology stack deep dive
-│   ├── USER_GUIDE.md               # Operator and troubleshooting manual
-│   └── TESTING.md                  # Test coverage & verification report
+│   ├── test_commands.py            # Command normalization, allowlist and safety tests
+│   ├── test_decoupling.py          # State decoupling and worker loop tests
+│   └── test_voice.py               # Online/offline speech and hardware error tests
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── PRESENTATION_GUIDE.md
+│   ├── TECH_STACK.md
+│   ├── USER_GUIDE.md
+│   └── TESTING.md
 ├── ARCHITECTURE.md                 # Complete software architecture specification
-├── PRESENTATION.md                 # Hackathon presentation script, pitch & jury Q&A
-└── README.md                       # Project root documentation (this file)
+├── PRESENTATION.md                 # Hackathon pitch script and jury Q&A
+└── README.md                       # This file
 ```
 
 ---
 
 ## 7. Supported Gestures and Voice Commands
 
-### Hand Gestures
+### Cursor gestures
 | Gesture | Trigger Condition | Resulting Desktop Action |
 | :--- | :--- | :--- |
-| **Point & Move** | Index fingertip (Landmark 8) in camera frame | Moves system mouse cursor with exponential smoothing. |
-| **Pinch Click** | Thumb tip to index tip distance ratio `< 0.32` | Dispatches single Left Click at current pointer position (0.45s cooldown). |
+| **Point & Move** | Index fingertip (landmark 8) in camera frame | Moves the system cursor with 1€-filter smoothing. |
+| **Pinch Click** | Thumb-tip to index-tip distance ratio `< 0.32` | Left click at the current pointer position (0.45 s cooldown). |
 
-### Allowlisted Voice Commands
+### Gesture shortcuts (finger-pattern keys)
+| Gesture shape | Action Triggered |
+| :--- | :--- |
+| Thumb + Index | Right Arrow |
+| Thumb + Index + Pinky | Left Arrow |
+| Index only | Space |
+| Middle only | `Z` |
+| Thumb + Index + Middle | `M` |
+| Thumb only | Enter |
+| Index + Middle | Up Arrow |
+| Index + Pinky | Down Arrow |
+| Index + Middle + Ring | Ctrl + F4 |
+| Pinky only | Ctrl + T |
+| 4 fingers (no pinky) | Ctrl + Win + Right |
+| 4 fingers (no thumb) | Ctrl + Alt + W |
+| Thumb + Middle + Ring + Pinky | Esc |
+| Thumb + Pinky | F5 (refresh) |
+| Thumb + Middle + Pinky | Mouse right-click |
+
+A gesture fires only after being held steady for a short time, then has a cooldown, so one hold sends one keypress. Shortcuts that close tabs or switch desktops need a longer hold. Because "Index only" and "Thumb + Index" share their shape with cursor movement and pinch click, gesture shortcuts run in a separate gesture-key mode so the two never fire together.
+
+### Allowlisted voice commands
 | Category | Spoken Command | Executed Desktop Action |
 | :--- | :--- | :--- |
-| **Mouse Clicks** | `"click"` / `"left click"` | Left mouse click |
+| **Mouse clicks** | `"click"` / `"left click"` | Left click |
 | | `"double click"` | Double click |
-| | `"right click"` | Right mouse click (context menu) |
-| **Scrolling** | `"scroll up"` | Scroll viewport up (+200 units) |
-| | `"scroll down"` | Scroll viewport down (-200 units) |
-| **Zooming** | `"zoom in"` | Zoom in (`Ctrl + +`) |
-| | `"zoom out"` | Zoom out (`Ctrl + -`) |
-| **Audio** | `"volume up"` | Increase system volume |
-| | `"volume down"` | Decrease system volume |
+| | `"right click"` | Right click (context menu) |
+| **Scrolling** | `"scroll up"` / `"scroll down"` | Scroll the page up or down |
+| **Zooming** | `"zoom in"` / `"zoom out"` | Zoom the page in or out |
+| **Audio** | `"volume up"` / `"volume down"` | Change system volume |
 | | `"mute"` / `"unmute"` | Toggle audio mute |
-| **Cursor Nudges** | `"move cursor left"` / `"move left"` | Nudge cursor left by 100 pixels |
-| | `"move cursor right"` / `"move right"` | Nudge cursor right by 100 pixels |
-| | `"move cursor up"` / `"move up"` | Nudge cursor up by 100 pixels |
-| | `"move cursor down"` / `"move down"` | Nudge cursor down by 100 pixels |
-| **State Control** | `"pause control"` / `"pause"` | Disable gesture mouse tracking |
-| | `"resume control"` / `"resume"` | Enable gesture mouse tracking |
+| **Cursor nudges** | `"move cursor left/right/up/down"` | Nudge the cursor by 100 pixels |
+| **State control** | `"pause control"` / `"resume control"` | Disable or enable gesture mouse tracking |
+| **Voice listening** | `"Hey AirControl, start listening"` | Start the voice command listener |
+| | `"Hey AirControl, stop listening"` | Stop it (only the wake phrase is heard while stopped) |
 
 > [!NOTE]
-> All unrecognized or non-allowlisted phrases are safely rejected with `Unknown command: <text>` and execute **zero** desktop actions.
+> Unrecognized or non-allowlisted phrases are rejected with `Unknown command: <text>` and execute **zero** desktop actions.
 
-The optional AI assistant is disabled unless configured in `.env`. It can answer general questions and interpret flexible action requests; every proposed action is validated against the local capability registry before execution. Deterministic built-in commands, including Vosk transcription, remain available without AI credentials or network access. Only implemented registry actions can be executed.
+The optional AI assistant is disabled unless configured in `.env`. It answers general questions and interprets flexible action requests, and every proposed action is validated against the local capability registry before execution. Built-in commands, including Vosk offline transcription, work without AI credentials or network access.
 
-Additional requests include web search (for example, `"search for tutorials on Google"`), file lookup in a selected folder (for example, `"find my resume in Documents folder"`), opening known folders or the Recycle Bin, typing dictated text, opening Windows text-size settings, and reporting AirControl's current status. Supported operations remain allowlisted; unsupported requests are rejected. Workstation lock and closing the current browser tab require confirmation.
+Additional requests include web search ("search for tutorials on Google"), file lookup in a selected folder ("find my resume in Documents folder"), opening known folders or the Recycle Bin, typing dictated text, opening Windows text-size settings, and reporting AirControl's status. Workstation lock and closing the current browser tab require confirmation.
 
-Set `AIRCONTROL_DISPLAY_FONT` and `AIRCONTROL_BODY_FONT` to choose installed UI fonts. AirControl falls back to the bundled Space Grotesk and Segoe UI fonts when the preferred system fonts are unavailable.
+Set `AIRCONTROL_DISPLAY_FONT` and `AIRCONTROL_BODY_FONT` to choose installed UI fonts. AirControl falls back to the bundled Space Grotesk and Segoe UI fonts.
 
 ---
 
@@ -212,81 +255,127 @@ Set `AIRCONTROL_DISPLAY_FONT` and `AIRCONTROL_BODY_FONT` to choose installed UI 
 
 ### Prerequisites
 - Windows 10 or 11 (64-bit)
-- Python 3.10 or 3.11 installed
-- Connected webcam and microphone
+- Python 3.10 to 3.12 (3.12 recommended). Python 3.13 and newer are not supported by the pinned MediaPipe.
+- A connected webcam and microphone
+- Google Chrome (for spoken answers in the web dashboard)
 
-### Setup Instructions
+### Setup
 ```powershell
-# 1. Clone repository & navigate to folder
+# 1. Go to the project folder (the folder that contains "backend" and "main.py")
 cd "c:\CSE Next-Gen Computational Intelligence\Google Antigravity\TRICITY AI-THON\AirControl"
 
-# 2. Create and activate virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+# 2. Create and activate the virtual environment
+py -3.12 -m venv .venv312
+.\.venv312\Scripts\Activate.ps1
 
 # 3. Install dependencies
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 
-# 4. (Optional) Configure AI chat and flexible voice requests
+# 4. (Optional) Configure the AI assistant
 Copy-Item .env.example .env
 notepad .env
 # Create a key at https://aistudio.google.com/app/apikey and set AIRCONTROL_AI_API_KEY.
-# AIRCONTROL_AI_MODEL defaults to gemini-3.5-flash-lite; do not share or commit .env.
+# AIRCONTROL_AI_MODEL defaults to gemini-3.5-flash-lite. Never share or commit .env.
+```
 
-# 5. Launch AirControl
+If `requirements.txt` is missing a package, install the core set manually:
+
+```powershell
+python -m pip install opencv-python "numpy<2" mediapipe==0.10.14 pyautogui SpeechRecognition customtkinter pillow vosk python-dotenv google-genai uvicorn fastapi websockets
+```
+
+> **Important:** use `mediapipe==0.10.14`. Newer releases removed `mp.solutions`, which AirControl relies on.
+
+For offline voice, download `vosk-model-en-us-0.22-lgraph` and unzip it to `models/vosk-model-en-us-0.22-lgraph`.
+
+### Run
+
+Desktop app:
+```powershell
 python main.py
 ```
 
-Optional AI answers and natural-language interpretation use Google's official `google-genai` SDK. Get an API key from [Google AI Studio](https://aistudio.google.com/app/apikey), add it to `AIRCONTROL_AI_API_KEY` in the project `.env`, and optionally set `AIRCONTROL_AI_MODEL` (default: `gemini-3.5-flash-lite`) and `AIRCONTROL_AI_TIMEOUT_SECONDS` (default: 12). AirControl never silently switches models. In Online voice mode, the recognized transcript and up to three recent conversation turns may be sent to Google; microphone audio is not sent by the planner. Offline voice mode disables cloud AI interpretation and uses Vosk plus local help. Without configuration, built-in commands and local capability/gesture answers remain available.
+Web dashboard (run from the folder that contains `backend`):
+```powershell
+python -m uvicorn backend.web_server:app --port 8000
+```
+Then open http://localhost:8000 and click **Enable voice** once (Chrome requires a click before it will speak).
 
-For full setup details and troubleshooting, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+### AI configuration
+Optional AI answers use Google's official `google-genai` SDK. Set `AIRCONTROL_AI_API_KEY` in `.env`, and optionally `AIRCONTROL_AI_MODEL` (default `gemini-3.5-flash-lite`) and `AIRCONTROL_AI_TIMEOUT_SECONDS` (default 12). AirControl never silently switches models. In Online voice mode, the recognized transcript and up to three recent conversation turns may be sent to Google; microphone audio is not sent by the planner. Offline voice mode disables cloud AI and uses Vosk plus local help. Without configuration, built-in commands and local help remain available.
+
+For full setup details, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ---
 
 ## 9. Testing & Quality Verification
 
-AirControl's test suite covers command parsing, Gemini interpretation and validation, offline/online recognition, error propagation, gesture transitions, and worker decoupling:
+The test suite covers command parsing, Gemini interpretation and validation, offline/online recognition, error propagation, gesture transitions and worker decoupling:
 
 ```powershell
-# Run the test suite:
-.\.venv\Scripts\python -m pytest -v
+.\.venv312\Scripts\python -m pytest -v
 ```
 
-For the complete test matrix, mocking strategy, and manual verification procedures, see [docs/TESTING.md](docs/TESTING.md).
+See [docs/TESTING.md](docs/TESTING.md) for the test matrix, mocking strategy and manual verification steps.
 
 ---
 
-## 10. Hackathon Presentation & Jury Defense
+## 10. Troubleshooting
 
-Preparing for evaluation? Everything you need for judging is prepared in [PRESENTATION.md](PRESENTATION.md):
-- **30-Second Elevator Pitch**
-- **90-Second Fast Pitch**
-- **3-Minute Comprehensive Presentation Script**
-- **11-Step Rehearsed Live Demo Plan**
-- **14 Anticipated Technical Jury Questions & Answers**
-- **Emergency Hardware Fallback Protocols**
-
----
-
-## 11. Limitations & Future Scope
-
-### Current Limitations:
-- **Optical Sensitivity:** MediaPipe requires adequate lighting; low-light or backlit environments can introduce landmark jitter.
-- **Push-to-Talk Voice:** Voice commands require clicking "Listen for Command" rather than continuous hands-free wake words.
-- **Single-Display Focus:** Coordinate mapping is currently calibrated to the primary monitor resolution.
-
-### Planned Enhancements:
-- **Continuous Wake-Word Engine:** Integration of on-device `openWakeWord` (*"Hey AirControl"*) for 100% hands-free voice triggers.
-- **Adaptive 1€ Filter:** Replacement of fixed 0.30 exponential smoothing with a velocity-adaptive 1€ filter for jitter-free precision at low speeds and instant response at high speeds.
-- **Multi-Gesture Neural Classifier:** Custom lightweight classifier for open palm, fist, peace sign, and swipe gestures.
-- **User-Configurable Keybindings:** JSON configuration file to map custom spoken phrases to arbitrary application shortcuts.
+| Problem | Fix |
+| :--- | :--- |
+| `No module named 'backend'` | Run the command from the folder that **contains** `backend`, not inside it. |
+| `No module named uvicorn` / `cv2` | Activate `.venv312` and run `python -m pip install -r requirements.txt`. |
+| `mediapipe has no attribute 'solutions'` | Use Python 3.10 to 3.12 and `mediapipe==0.10.14`. |
+| Port 8000 already in use | `netstat -ano \| findstr :8000`, then `taskkill /PID <pid> /F` (or use `--port 8001`). |
+| `Unknown command ... Configure AIRCONTROL_AI_API_KEY` | Add the key and model to `.env`, or use a registered command. |
+| Chatbot does not speak | Click **Enable voice** once and check the speaker toggle and system volume. |
+| Camera or microphone not found | Close other apps using them and check Windows privacy settings. |
 
 ---
 
-## 12. Documentation Index
+## 11. Hackathon Presentation & Jury Defense
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Complete Software Architecture & Concurrency Model
-- [PRESENTATION.md](PRESENTATION.md) — Hackathon Presentation Playbook & Jury Defense
-- [docs/TECH_STACK.md](docs/TECH_STACK.md) — Technology Stack Analysis & Rationale
-- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — Operator Guide, Setup & Troubleshooting
-- [docs/TESTING.md](docs/TESTING.md) — Testing Strategy & Verification Report
+Everything for judging is in [PRESENTATION.md](PRESENTATION.md): a 30-second pitch, a 90-second pitch, a 3-minute script, a step-by-step live demo plan, anticipated jury questions with answers, and hardware fallback steps.
+
+---
+
+## 12. Limitations & Future Scope
+
+### Current limitations
+- **Optical sensitivity:** MediaPipe needs adequate lighting; low-light or backlit scenes can add landmark jitter.
+- **Speech accuracy:** recognition depends on microphone quality, background noise and accent; online mode needs internet, and offline mode needs the Vosk model.
+- **Single-display focus:** coordinate mapping is calibrated to the primary monitor.
+- **Limited user testing:** the first validation with 10 to 20 volunteer presenters or students is still planned.
+
+### Planned enhancements
+- **Multi-gesture classifier:** swipes and richer dynamic gestures beyond finger-pattern shortcuts.
+- **User-configurable keybindings:** a JSON file mapping custom phrases and gestures to application shortcuts.
+- **Multi-monitor support** and per-user control profiles.
+- **Accessibility testing** with users who have different motor and communication needs.
+
+---
+
+## 13. Git Hygiene
+
+Virtual environments, `.env` and caches are never committed. `.gitignore` includes:
+
+```
+.venv312/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+```
+
+---
+
+## 14. Documentation Index
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): complete software architecture and concurrency model
+- [PRESENTATION.md](PRESENTATION.md): hackathon presentation playbook and jury defense
+- [docs/TECH_STACK.md](docs/TECH_STACK.md): technology stack analysis and rationale
+- [docs/USER_GUIDE.md](docs/USER_GUIDE.md): operator guide, setup and troubleshooting
+- [docs/TESTING.md](docs/TESTING.md): testing strategy and verification report

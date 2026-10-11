@@ -309,6 +309,16 @@ class CommandRouter:
                 if cancel_event is not None:
                     cancel_event.set()
                 return True, "Cancellation requested.", "Cancel Task"
+            elif req.intent == "SET_CONTROL_MODE":
+                mode = req.params.get("mode", "cursor")
+                if context and hasattr(context, "set_control_mode"):
+                    context.set_control_mode(mode)
+                elif context and hasattr(context, "__dict__"):
+                    context.__dict__["control_mode"] = mode
+                    if sq is not None:
+                        sq.put(f"CONTROL_MODE:{mode}")
+                label = "Cursor Mode" if mode == "cursor" else "Gesture-Key Mode"
+                return True, f"Control mode switched to {label}", f"Set {label}"
 
         # -------------------------------------------------------------
         # 7. Application Launch & Close Domain Actions
@@ -554,3 +564,9 @@ class CommandRouter:
             _publish_assistant(context, f"FINAL:Stopped: {final_msg}")
         self._remember_turn(text, final_msg)
         return overall_success, final_msg, final_label
+
+    def route_command(self, text: str, app=None) -> Tuple[bool, str, str]:
+        """Backward-compatibility alias for execute()."""
+        return self.execute(text, app=app)
+
+    route = execute

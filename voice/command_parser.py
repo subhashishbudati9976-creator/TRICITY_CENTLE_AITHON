@@ -343,13 +343,32 @@ class CommandParser:
         if cmd in ("lock my pc", "lock the pc", "lock computer", "lock screen"):
             return ActionRequest(domain="SYSTEM", intent="LOCK_PC", raw_segment=segment, description="Lock Workstation")
 
-        if cmd == "scroll up":
+        scroll_up_variants = {
+            "scroll up", "scroll page up", "scroll the page up", "scroll up the page",
+            "scroll up page", "page up", "scroll upward", "scroll upwards",
+        }
+        if cmd in scroll_up_variants:
             return ActionRequest(domain="SYSTEM", intent="SCROLL_UP", raw_segment=segment, description="Scroll Up")
-        if cmd == "scroll down":
+
+        scroll_down_variants = {
+            "scroll down", "scroll page down", "scroll the page down", "scroll down the page",
+            "scroll down page", "page down", "scroll downward", "scroll downwards",
+        }
+        if cmd in scroll_down_variants:
             return ActionRequest(domain="SYSTEM", intent="SCROLL_DOWN", raw_segment=segment, description="Scroll Down")
-        if cmd in ("zoom in", "zoom in."):
+
+        zoom_in_variants = {
+            "zoom in", "zoom in.", "zoom in the page", "zoom in page", "zoom the page in",
+            "zoom page in", "zoom in screen", "zoom screen in", "magnify",
+        }
+        if cmd in zoom_in_variants:
             return ActionRequest(domain="SYSTEM", intent="ZOOM_IN", raw_segment=segment, description="Zoom In")
-        if cmd in ("zoom out", "zoom out."):
+
+        zoom_out_variants = {
+            "zoom out", "zoom out.", "zoom out the page", "zoom out page", "zoom the page out",
+            "zoom page out", "zoom out screen", "zoom screen out",
+        }
+        if cmd in zoom_out_variants:
             return ActionRequest(domain="SYSTEM", intent="ZOOM_OUT", raw_segment=segment, description="Zoom Out")
         if cmd in ("mute", "unmute"):
             return ActionRequest(domain="SYSTEM", intent="MUTE", raw_segment=segment, description="Mute / Unmute")
@@ -417,6 +436,38 @@ class CommandParser:
             return ActionRequest(domain="GESTURE", intent="RESUME_CONTROL", raw_segment=segment, description="Resume Mouse Control")
         if cmd in ("cancel task", "cancel current task", "stop current task", "cancel request"):
             return ActionRequest(domain="GESTURE", intent="CANCEL_TASK", raw_segment=segment, description="Cancel Current Task")
+        if cmd in (
+            "cursor mode",
+            "switch to cursor mode",
+            "mouse mode",
+            "enable cursor mode",
+            "cursor control",
+            "switch to mouse mode",
+        ):
+            return ActionRequest(
+                domain="GESTURE",
+                intent="SET_CONTROL_MODE",
+                params={"mode": "cursor"},
+                raw_segment=segment,
+                description="Switch to Cursor Mode",
+            )
+        if cmd in (
+            "gesture mode",
+            "gesture key mode",
+            "gesture keys mode",
+            "switch to gesture mode",
+            "switch to gesture key mode",
+            "enable gesture mode",
+            "keyboard mode",
+            "switch to keyboard mode",
+        ):
+            return ActionRequest(
+                domain="GESTURE",
+                intent="SET_CONTROL_MODE",
+                params={"mode": "gesture"},
+                raw_segment=segment,
+                description="Switch to Gesture-Key Mode",
+            )
 
         # -------------------------------------------------------------
         # 9. General Application Launch & Close Commands (Dynamic Discovery)

@@ -65,6 +65,7 @@ _CAPABILITY_ROWS = (
     ("GESTURE", "PAUSE_CONTROL", {}, "Pause hand-controlled mouse movement"),
     ("GESTURE", "RESUME_CONTROL", {}, "Resume hand-controlled mouse movement"),
     ("GESTURE", "CANCEL_TASK", {}, "Cancel the current assistant task"),
+    ("GESTURE", "SET_CONTROL_MODE", {"mode": str}, "Switch control mode between cursor and gesture keys"),
     ("WINDOW", "CLOSE_ACTIVE_WINDOW", {}, "Close the currently active window"),
     ("APPLICATION", "LAUNCH_APP", {"app_name": str}, "Launch an installed application"),
     ("APPLICATION", "CLOSE_APP", {"app_name": str}, "Close an open application"),

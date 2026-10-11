@@ -17,14 +17,14 @@ export const CalibCard: React.FC<CalibCardProps> = ({
         <div className="section-tag-group">
           <span className="section-num">[ 04 ]</span>
           <BlurText
-            text="CALIBRATION & FILTER PARAMETERS"
+            text="CALIBRATION & PARAMETER DESK"
             className="section-title"
             animateBy="words"
             direction="top"
             delay={80}
           />
         </div>
-        <span className="section-meta">1€ FILTER DESK</span>
+        <span className="section-meta">FILTERS & COOLDOWNS</span>
       </div>
 
       <div className="slider-group">
@@ -82,6 +82,63 @@ export const CalibCard: React.FC<CalibCardProps> = ({
           />
           <span className="slider-value">
             {calibration.click_cooldown.toFixed(2)} s
+          </span>
+        </div>
+
+        {/* Gesture Hold Time */}
+        <div className="slider-row">
+          <span className="slider-label">Gesture Hold Time</span>
+          <input
+            type="range"
+            min="0.25"
+            max="0.8"
+            step="0.05"
+            value={calibration.gesture_hold_normal ?? 0.4}
+            onChange={(e) =>
+              onUpdateCalibration({ gesture_hold_normal: parseFloat(e.target.value) })
+            }
+            className="slider-input"
+          />
+          <span className="slider-value">
+            {(calibration.gesture_hold_normal ?? 0.4).toFixed(2)} s
+          </span>
+        </div>
+
+        {/* Gesture Cooldown */}
+        <div className="slider-row">
+          <span className="slider-label">Gesture Cooldown</span>
+          <input
+            type="range"
+            min="0.4"
+            max="2.0"
+            step="0.05"
+            value={calibration.gesture_cooldown ?? 0.9}
+            onChange={(e) =>
+              onUpdateCalibration({ gesture_cooldown: parseFloat(e.target.value) })
+            }
+            className="slider-input"
+          />
+          <span className="slider-value">
+            {(calibration.gesture_cooldown ?? 0.9).toFixed(2)} s
+          </span>
+        </div>
+
+        {/* Continuous Scroll Speed */}
+        <div className="slider-row">
+          <span className="slider-label">Scroll Speed</span>
+          <input
+            type="range"
+            min="80"
+            max="360"
+            step="10"
+            value={calibration.scroll_speed ?? 180}
+            onChange={(e) =>
+              onUpdateCalibration({ scroll_speed: parseInt(e.target.value, 10) })
+            }
+            className="slider-input"
+          />
+          <span className="slider-value">
+            {calibration.scroll_speed ?? 180} px
           </span>
         </div>
       </div>

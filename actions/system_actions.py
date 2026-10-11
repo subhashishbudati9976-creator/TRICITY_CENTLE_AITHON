@@ -112,6 +112,17 @@ class SystemActions:
         pyautogui.scroll(-200)
         return True, "Action: Scroll Down", "Scroll Down"
 
+    def zoom_in(self) -> Tuple[bool, str, str]:
+        try:
+            pyautogui.hotkey("ctrl", "+", interval=0.03)
+        except Exception:
+            pyautogui.hotkey("ctrl", "=", interval=0.03)
+        return True, "Action: Zoom In", "Zoom In"
+
+    def zoom_out(self) -> Tuple[bool, str, str]:
+        pyautogui.hotkey("ctrl", "-", interval=0.03)
+        return True, "Action: Zoom Out", "Zoom Out"
+
     def reject_high_impact(self, action_name: str) -> Tuple[bool, str, str]:
         """Prevents voice execution of dangerous commands (shutdown, restart, format, delete)."""
         msg = f"Action '{action_name}' rejected: High-impact action requires manual confirmation."

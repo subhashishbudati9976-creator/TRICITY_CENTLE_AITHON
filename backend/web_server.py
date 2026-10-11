@@ -8,7 +8,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Set
+from typing import Optional, Set
 
 # pyrefly: ignore [missing-import]
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -38,13 +38,25 @@ connected_websockets: Set[WebSocket] = set()
 
 
 class CalibrationPayload(BaseModel):
-    sensitivity: float = None
-    min_cutoff: float = None
-    click_cooldown: float = None
+    sensitivity: Optional[float] = None
+    min_cutoff: Optional[float] = None
+    click_cooldown: Optional[float] = None
+    gesture_hold_normal: Optional[float] = None
+    gesture_hold_dangerous: Optional[float] = None
+    gesture_cooldown: Optional[float] = None
+    scroll_speed: Optional[int] = None
 
 
 class VoiceModePayload(BaseModel):
     mode: str
+
+
+class ControlModePayload(BaseModel):
+    mode: str
+
+
+class SpeechStatePayload(BaseModel):
+    speaking: bool
 
 
 @app.on_event("startup")
@@ -59,7 +71,7 @@ def shutdown_event():
 
 
 async def broadcast_telemetry_loop():
-    """Polls engine status and logs every 50ms and broadcasts updates to connected WebSockets."""
+    """Polls engine status and logs every 40ms and broadcasts updates to connected WebSockets."""
     last_log_count = len(engine.audit_logs)
     while engine.running:
         try:
@@ -100,9 +112,39 @@ def toggle_mouse():
     return JSONResponse({"mouse_paused": paused})
 
 
+@app.post("/api/action/set_control_mode")
+def set_control_mode(payload: ControlModePayload):
+    mode = engine.set_control_mode(payload.mode)
+    return JSONResponse({"control_mode": mode})
+
+
+@app.post("/api/action/toggle_control_mode")
+def toggle_control_mode():
+    mode = engine.toggle_control_mode()
+    return JSONResponse({"control_mode": mode})
+
+
+@app.post("/api/action/toggle_gesture_keys")
+def toggle_gesture_keys():
+    enabled = engine.toggle_gesture_keys()
+    return JSONResponse({"gesture_keys_enabled": enabled})
+
+
+@app.post("/api/action/speech_state")
+def speech_state(payload: SpeechStatePayload):
+    engine.set_speech_state(payload.speaking)
+    return JSONResponse({"browser_speaking": engine.browser_speaking})
+
+
 @app.post("/api/action/listen_voice")
 def listen_voice():
     success = engine.start_voice()
+    return JSONResponse({"success": success})
+
+
+@app.post("/api/action/stop_voice")
+def stop_voice():
+    success = engine.stop_voice()
     return JSONResponse({"success": success})
 
 
@@ -124,13 +166,16 @@ def update_calibration(payload: CalibrationPayload):
         sensitivity=payload.sensitivity,
         min_cutoff=payload.min_cutoff,
         click_cooldown=payload.click_cooldown,
+        gesture_hold_normal=payload.gesture_hold_normal,
+        gesture_hold_dangerous=payload.gesture_hold_dangerous,
+        gesture_cooldown=payload.gesture_cooldown,
+        scroll_speed=payload.scroll_speed,
     )
     return JSONResponse({"success": True, "calibration": engine.get_state()["calibration"]})
 
 
 def generate_mjpeg_stream():
     """Generator for multipart/x-mixed-replace MJPEG streaming."""
-    blank_frame = None
     while engine.running:
         frame_bytes = engine.get_latest_jpeg()
         if frame_bytes is None:
@@ -167,8 +212,18 @@ async def websocket_endpoint(websocket: WebSocket):
             action = msg.get("action")
             if action == "toggle_mouse":
                 engine.toggle_pause()
+            elif action == "set_control_mode":
+                engine.set_control_mode(msg.get("mode", "cursor"))
+            elif action == "toggle_control_mode":
+                engine.toggle_control_mode()
+            elif action == "toggle_gesture_keys":
+                engine.toggle_gesture_keys()
+            elif action == "speech_state":
+                engine.set_speech_state(msg.get("speaking", False))
             elif action == "listen_voice":
                 engine.start_voice()
+            elif action == "stop_voice":
+                engine.stop_voice()
             elif action == "cancel_voice":
                 engine.cancel_current_task()
             elif action == "set_voice_mode":

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import GlowCursor from './components/reactbits/GlowCursor';
 import { ParticleCard } from './components/reactbits/MagicBento';
 import { BackgroundShards } from './components/BackgroundShards';
@@ -9,16 +9,56 @@ import { AuditLogCard } from './components/AuditLogCard';
 import { CalibCard } from './components/CalibCard';
 import { Footer } from './components/Footer';
 import { useAirControlSocket } from './hooks/useAirControlSocket';
+import { useBrowserSpeech } from './hooks/useBrowserSpeech';
 
 export default function App() {
+  const speechRef = useRef<{ speakText: (text: string) => void }>({ speakText: () => {} });
+
   const {
     state,
     toggleMouse,
+    setControlMode,
+    toggleControlMode,
+    toggleGestureKeys,
     setVoiceMode,
     listenVoice,
+    stopVoice,
     cancelVoice,
+    sendSpeechState,
     updateCalibration,
-  } = useAirControlSocket();
+  } = useAirControlSocket({
+    onSpeak: (text) => {
+      speechRef.current.speakText(text);
+    },
+  });
+
+  const handleSpeakingChange = useCallback(
+    (speaking: boolean) => {
+      sendSpeechState(speaking);
+    },
+    [sendSpeechState]
+  );
+
+  const {
+    voices,
+    selectedVoice,
+    rate,
+    pitch,
+    speakerEnabled,
+    isUnlocked,
+    isSpeaking,
+    speakText,
+    stopSpeaking,
+    toggleSpeaker,
+    unlockAudio,
+    updateVoice,
+    updateRate,
+    updatePitch,
+  } = useBrowserSpeech(handleSpeakingChange);
+
+  useEffect(() => {
+    speechRef.current.speakText = speakText;
+  }, [speakText]);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cursorQuality, setCursorQuality] = useState<'high' | 'medium' | 'low'>('high');
@@ -73,12 +113,16 @@ export default function App() {
         <Header
           mousePaused={state.mouse_paused}
           cameraConnected={state.camera_connected}
+          controlMode={state.control_mode}
+          gestureKeysEnabled={state.gesture_keys_enabled}
           onToggleMouse={toggleMouse}
+          onToggleControlMode={toggleControlMode}
+          onToggleGestureKeys={toggleGestureKeys}
         />
 
         {/* Dashboard Bento Workspace */}
         <main className="dashboard-grid">
-          {/* Left Column: Optical Sensor Matrix (No tilt on webcam card to maintain feed stability) */}
+          {/* Left Column: Optical Sensor Matrix */}
           <section className="panel-col">
             <ParticleCard
               enableTilt={false}
@@ -91,6 +135,10 @@ export default function App() {
                 cameraConnected={state.camera_connected}
                 handsDetected={state.hands_detected}
                 mousePaused={state.mouse_paused}
+                controlMode={state.control_mode}
+                detectedGesture={state.detected_gesture}
+                gestureAction={state.gesture_action}
+                gestureProgress={state.gesture_progress}
                 onFullscreenChange={setIsFullscreen}
               />
             </ParticleCard>
@@ -109,12 +157,27 @@ export default function App() {
               <VoiceCard
                 voiceMode={state.voice_mode}
                 voiceBusy={state.voice_busy}
+                voiceListeningActive={state.voice_listening_active}
+                browserSpeaking={isSpeaking || state.browser_speaking}
                 voiceStatus={state.voice_status}
                 recognizedText={state.recognized_text}
                 assistantStatus={state.assistant_status}
+                speakerEnabled={speakerEnabled}
+                isUnlocked={isUnlocked}
+                voices={voices}
+                selectedVoice={selectedVoice}
+                rate={rate}
+                pitch={pitch}
                 onSetVoiceMode={setVoiceMode}
                 onListenVoice={listenVoice}
+                onStopVoice={stopVoice}
                 onCancelVoice={cancelVoice}
+                onToggleSpeaker={toggleSpeaker}
+                onStopSpeaking={stopSpeaking}
+                onUnlockAudio={unlockAudio}
+                onUpdateVoice={updateVoice}
+                onUpdateRate={updateRate}
+                onUpdatePitch={updatePitch}
               />
             </ParticleCard>
 
