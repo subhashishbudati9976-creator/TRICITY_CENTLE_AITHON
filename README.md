@@ -13,6 +13,8 @@
 
 Built for the **Tri-City AI-Thon** (KITS Warangal, 24-hour hackathon).
 
+[![Watch the gesture-control experience](asdf.png)](https://github.com/subhashishbudati9976-creator/TRICITY_CENTLE_AITHON_AIRCONTROL/video.mp4)
+
 ---
 
 ## 1. Project Identity & Overview
