@@ -14,7 +14,7 @@
 Built for the **Tri-City AI-Thon** (KITS Warangal, 24-hour hackathon).
 
 [![Watch the gesture-control experience](asdf.png)](https://github.com/subhashishbudati9976-creator/TRICITY_CENTLE_AITHON_AIRCONTROL/blob/Subbu/video.mp4)
-** Click the pic above to watch the demonstration of the application!**
+** Click the pic above to watch the demonstration of the application! Download it as Github cannot show large files on the web currently!**
 
 ---
 
